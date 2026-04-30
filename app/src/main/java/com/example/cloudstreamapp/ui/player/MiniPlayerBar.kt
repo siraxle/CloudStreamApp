@@ -37,12 +37,13 @@ fun MiniPlayerBar(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column {
-            if (state.durationMs > 0) {
-                LinearProgressIndicator(
-                    progress = { (state.positionMs.toFloat() / state.durationMs).coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
+            LinearProgressIndicator(
+                progress = {
+                    val dur = state.durationMs
+                    if (dur > 0) (state.positionMs.toFloat() / dur).coerceIn(0f, 1f) else 0f
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),

@@ -171,10 +171,11 @@ private fun AudioPlayerContent(
             Spacer(modifier = Modifier.height(48.dp))
 
             if (state.durationMs > 0) {
+                val safeMax = state.durationMs.coerceAtLeast(1L).toFloat()
                 Slider(
-                    value = state.positionMs.toFloat(),
+                    value = state.positionMs.toFloat().coerceIn(0f, safeMax),
                     onValueChange = { onSeekTo(it.toLong()) },
-                    valueRange = 0f..state.durationMs.toFloat(),
+                    valueRange = 0f..safeMax,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Row(
@@ -452,10 +453,11 @@ private fun VideoPlayerContent(
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                 ) {
                     if (state.durationMs > 0) {
+                        val safeMax = state.durationMs.coerceAtLeast(1L).toFloat()
                         Slider(
-                            value = state.positionMs.toFloat(),
+                            value = state.positionMs.toFloat().coerceIn(0f, safeMax),
                             onValueChange = { onSeekTo(it.toLong()) },
-                            valueRange = 0f..state.durationMs.toFloat(),
+                            valueRange = 0f..safeMax,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Row(
