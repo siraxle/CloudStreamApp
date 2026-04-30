@@ -27,9 +27,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
 fun MiniPlayerBar(
-    viewModel: PlayerViewModel = hiltViewModel(),
+    viewModel: MiniPlayerViewModel = hiltViewModel(),
 ) {
-    val state by viewModel.playerState.collectAsState()
+    val state by viewModel.state.collectAsState()
     if (!state.hasMedia) return
 
     Surface(

@@ -54,7 +54,7 @@ fun NavGraph(
                             itemPath = item.path.relativePath,
                             itemName = item.name,
                         )
-                    )
+                    ) { launchSingleTop = true }
                 },
                 onBack = { navController.popBackStack() },
             )
@@ -94,7 +94,7 @@ fun NavGraph(
                             itemPath = item.path.relativePath,
                             itemName = item.name,
                         )
-                    )
+                    ) { launchSingleTop = true }
                 },
             )
         }
@@ -109,7 +109,7 @@ fun NavGraph(
                             itemPath = item.path.relativePath,
                             itemName = item.name,
                         )
-                    )
+                    ) { launchSingleTop = true }
                 }
             )
         }

@@ -10,6 +10,7 @@ import com.example.cloudstreamapp.domain.model.PlaylistItem
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -27,6 +28,7 @@ class PlaylistDetailViewModel @Inject constructor(
 
     val tracks: StateFlow<List<TrackRow>> = repo.getItemsWithMetadata(playlistId)
         .map { pairs -> pairs.map { (item, cloudItem) -> TrackRow(item, cloudItem) } }
+        .catch { emit(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val playlistName: StateFlow<String> = repo.getAll()

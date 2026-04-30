@@ -59,12 +59,16 @@ class PlayerViewModel @Inject constructor(
         )
         val future = MediaController.Builder(context, sessionToken).buildAsync()
         future.addListener({
-            controller = future.get()
-            controller?.addListener(playerListener)
-            updateState()
-            pendingPlay?.let { (url, title) ->
-                enqueuePlay(url, title)
-                pendingPlay = null
+            try {
+                controller = future.get()
+                controller?.addListener(playerListener)
+                updateState()
+                pendingPlay?.let { (url, title) ->
+                    enqueuePlay(url, title)
+                    pendingPlay = null
+                }
+            } catch (e: Exception) {
+                _error.value = "Не удалось подключиться к плееру: ${e.message}"
             }
         }, MoreExecutors.directExecutor())
     }
@@ -178,6 +182,7 @@ class PlayerViewModel @Inject constructor(
     override fun onCleared() {
         controller?.removeListener(playerListener)
         controller?.release()
+        controller = null
         super.onCleared()
     }
 
