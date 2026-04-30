@@ -48,7 +48,7 @@ import com.example.cloudstreamapp.domain.model.CloudItem
 @Composable
 fun BrowserScreen(
     onNavigateToFolder: (sourceId: String, path: String) -> Unit,
-    onPlayMedia: (mediaId: String) -> Unit,
+    onPlayMedia: (CloudItem) -> Unit,
     onBack: () -> Unit,
     viewModel: BrowserViewModel = hiltViewModel(),
 ) {
@@ -111,7 +111,7 @@ fun BrowserScreen(
                                     if (item.type == CloudItem.ItemType.DIRECTORY) {
                                         viewModel.navigateTo(item.path.relativePath)
                                     } else {
-                                        onPlayMedia(item.id)
+                                        onPlayMedia(item)
                                     }
                                 },
                             )
