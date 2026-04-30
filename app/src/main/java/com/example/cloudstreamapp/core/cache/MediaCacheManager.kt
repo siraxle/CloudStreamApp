@@ -1,0 +1,41 @@
+package com.example.cloudstreamapp.core.cache
+
+import android.content.Context
+import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class MediaCacheManager @Inject constructor(
+    @param:ApplicationContext private val context: Context,
+) {
+    private var maxBytes = DEFAULT_MAX_BYTES
+    private var released = false
+
+    val simpleCache: SimpleCache by lazy {
+        SimpleCache(
+            File(context.cacheDir, "media"),
+            LeastRecentlyUsedCacheEvictor(maxBytes),
+            StandaloneDatabaseProvider(context),
+        )
+    }
+
+    fun setMaxCacheBytes(bytes: Long) {
+        maxBytes = bytes
+    }
+
+    fun release() {
+        if (!released) {
+            simpleCache.release()
+            released = true
+        }
+    }
+
+    companion object {
+        const val DEFAULT_MAX_BYTES = 2L * 1024 * 1024 * 1024 // 2 GB
+    }
+}
