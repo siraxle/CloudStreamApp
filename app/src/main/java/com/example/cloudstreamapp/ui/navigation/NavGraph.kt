@@ -83,20 +83,26 @@ fun NavGraph(
         composable(
             route = Screen.PlaylistDetail.route,
             arguments = listOf(navArgument("playlistId") { type = NavType.StringType }),
-        ) {
+        ) { backStackEntry ->
+            val playlistId = backStackEntry.arguments?.getString("playlistId") ?: ""
             PlaylistDetailScreen(
                 onBack = { navController.popBackStack() },
-                onPlayItem = { item ->
+                onPlayTrack = { startIndex ->
                     navController.navigate(
-                        Screen.Player.createRoute(
-                            cloudType = item.path.cloudType.name,
-                            sourceUrl = item.path.sourceId,
-                            itemPath = item.path.relativePath,
-                            itemName = item.name,
-                        )
-                    ) { launchSingleTop = true }
+                        Screen.PlaylistPlayer.createRoute(playlistId, startIndex)
+                    )
                 },
             )
+        }
+
+        composable(
+            route = Screen.PlaylistPlayer.route,
+            arguments = listOf(
+                navArgument("playlistId") { type = NavType.StringType },
+                navArgument("startIndex") { type = NavType.IntType },
+            ),
+        ) {
+            PlayerScreen(onBack = { navController.popBackStack() })
         }
 
         composable(Screen.Search.route) {

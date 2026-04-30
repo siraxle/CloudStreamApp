@@ -18,6 +18,10 @@ sealed class Screen(val route: String) {
             itemName: String,
         ): String = "player/$cloudType/${Uri.encode(sourceUrl)}/${Uri.encode(itemPath)}/${Uri.encode(itemName)}"
     }
+    object PlaylistPlayer : Screen("player/playlist/{playlistId}/{startIndex}") {
+        fun createRoute(playlistId: String, startIndex: Int) =
+            "player/playlist/$playlistId/$startIndex"
+    }
     object Playlists : Screen("playlists")
     object PlaylistDetail : Screen("playlist/{playlistId}") {
         fun createRoute(playlistId: String) = "playlist/$playlistId"

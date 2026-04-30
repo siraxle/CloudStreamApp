@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
@@ -30,13 +30,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.cloudstreamapp.core.utils.isAudioFile
 import com.example.cloudstreamapp.core.utils.isVideoFile
-import com.example.cloudstreamapp.domain.model.CloudItem
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistDetailScreen(
     onBack: () -> Unit,
-    onPlayItem: (CloudItem) -> Unit,
+    onPlayTrack: (index: Int) -> Unit,
     viewModel: PlaylistDetailViewModel = hiltViewModel(),
 ) {
     val tracks by viewModel.tracks.collectAsState()
@@ -66,7 +65,7 @@ fun PlaylistDetailScreen(
                 )
             } else {
                 LazyColumn {
-                    items(tracks, key = { it.item.id }) { row ->
+                    itemsIndexed(tracks, key = { _, row -> row.item.id }) { index, row ->
                         val cloudItem = row.cloudItem
                         val displayName = cloudItem?.name ?: "Неизвестный трек"
                         val icon = when {
@@ -88,7 +87,7 @@ fun PlaylistDetailScreen(
                                 }
                             },
                             modifier = Modifier.clickable(enabled = cloudItem != null) {
-                                cloudItem?.let { onPlayItem(it) }
+                                onPlayTrack(index)
                             },
                         )
                     }
