@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -50,22 +51,34 @@ class BrowserViewModel @Inject constructor(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    private val _sortOrder = MutableStateFlow(SortOrder.NAME_ASC)
+    val sortOrder: StateFlow<SortOrder> = _sortOrder.asStateFlow()
+
     @OptIn(ExperimentalCoroutinesApi::class)
-    val items: StateFlow<List<CloudItem>> = _pathStack
-        .flatMapLatest { stack ->
+    val items: StateFlow<List<CloudItem>> = combine(_pathStack, _sortOrder) { stack, sort ->
+        Pair(stack, sort)
+    }
+        .flatMapLatest { (stack, sort) ->
             val path = stack.last()
             val source = sourceRepo.getById(sourceId)
                 ?: return@flatMapLatest kotlinx.coroutines.flow.flowOf(emptyList())
-            // Use source.url as the public key for cloud API calls, not source.id (UUID)
             val cloudPath = CloudPath(sourceId = source.url, relativePath = path, cloudType = source.provider)
             listFolder(cloudPath)
                 .onStart { _isLoading.value = true }
                 .onEach { _isLoading.value = false }
                 .map { list ->
-                    list.sortedWith(
-                        compareBy<CloudItem> { it.type != CloudItem.ItemType.DIRECTORY }
-                            .thenBy { it.name.lowercase() }
-                    )
+                    val dirFirst = compareBy<CloudItem> { it.type != CloudItem.ItemType.DIRECTORY }
+                    when (sort) {
+                        SortOrder.NAME_ASC -> list.sortedWith(dirFirst.thenBy { it.name.lowercase() })
+                        SortOrder.NAME_DESC -> list.sortedWith(dirFirst.thenByDescending { it.name.lowercase() })
+                        SortOrder.SIZE_ASC -> list.sortedWith(dirFirst.thenBy { it.sizeBytes ?: 0L })
+                        SortOrder.SIZE_DESC -> list.sortedWith(dirFirst.thenByDescending { it.sizeBytes ?: 0L })
+                        SortOrder.TYPE -> list.sortedWith(
+                            dirFirst
+                                .thenBy { it.name.substringAfterLast('.').lowercase() }
+                                .thenBy { it.name.lowercase() }
+                        )
+                    }
                 }
                 .catch { e ->
                     _isLoading.value = false
@@ -93,6 +106,7 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
+    fun setSortOrder(order: SortOrder) { _sortOrder.value = order }
     fun dismissError() { _error.value = null }
 
     // Playlists
@@ -150,4 +164,12 @@ class BrowserViewModel @Inject constructor(
     }
 
     fun dismissPlaylistMessage() { _playlistMessage.value = null }
+}
+
+enum class SortOrder(val label: String) {
+    NAME_ASC("По имени А-Я"),
+    NAME_DESC("По имени Я-А"),
+    SIZE_ASC("По размеру ↑"),
+    SIZE_DESC("По размеру ↓"),
+    TYPE("По типу"),
 }

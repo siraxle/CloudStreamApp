@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
@@ -57,6 +58,9 @@ class PlayerViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    private val _player = MutableStateFlow<Player?>(null)
+    val player: StateFlow<Player?> = _player.asStateFlow()
+
     init {
         connectToService()
         startProgressUpdater()
@@ -77,6 +81,7 @@ class PlayerViewModel @Inject constructor(
             try {
                 controller = future.get()
                 controller?.addListener(playerListener)
+                _player.value = controller
                 updateState()
                 pendingPlay?.let { (url, title) ->
                     enqueuePlay(url, title)
@@ -226,6 +231,9 @@ class PlayerViewModel @Inject constructor(
             newPosition: Player.PositionInfo,
             reason: Int,
         ) = updateState()
+        override fun onVideoSizeChanged(videoSize: VideoSize) {
+            _playerState.value = _playerState.value.copy(hasVideo = videoSize.width > 0)
+        }
     }
 
     private fun updateState() {
@@ -277,6 +285,11 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    fun seekBy(deltaMs: Long) {
+        val c = controller ?: return
+        c.seekTo((c.currentPosition + deltaMs).coerceIn(0L, c.duration.coerceAtLeast(0L)))
+    }
+
     fun togglePlayPause() {
         val c = controller ?: return
         if (c.isPlaying) c.pause() else c.play()
@@ -288,6 +301,7 @@ class PlayerViewModel @Inject constructor(
     fun dismissError() { _error.value = null }
 
     override fun onCleared() {
+        _player.value = null
         controller?.removeListener(playerListener)
         controller?.release()
         controller = null
@@ -301,5 +315,6 @@ class PlayerViewModel @Inject constructor(
         val durationMs: Long = 0L,
         val positionMs: Long = 0L,
         val hasMedia: Boolean = false,
+        val hasVideo: Boolean = false,
     )
 }
