@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
+import com.example.cloudstreamapp.domain.model.CacheStatus
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
@@ -26,6 +27,17 @@ class MediaCacheManager @Inject constructor(
 
     fun setMaxCacheBytes(bytes: Long) {
         maxBytes = bytes
+    }
+
+    fun getCacheStatus(key: String, sizeBytes: Long?): CacheStatus {
+        if (released) return CacheStatus.REMOTE
+        val range = sizeBytes ?: (Long.MAX_VALUE / 2)
+        val cachedBytes = simpleCache.getCachedBytes(key, 0, range)
+        return when {
+            cachedBytes <= 0 -> CacheStatus.REMOTE
+            sizeBytes != null && cachedBytes >= sizeBytes -> CacheStatus.CACHED
+            else -> CacheStatus.PARTIAL
+        }
     }
 
     fun release() {

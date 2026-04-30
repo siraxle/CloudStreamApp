@@ -48,6 +48,19 @@ fun MiniPlayerBar(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             ) {
+                IconButton(onClick = { viewModel.skipToPrevious() }) {
+                    Icon(Icons.Default.SkipPrevious, contentDescription = "Предыдущий")
+                }
+                IconButton(onClick = { viewModel.togglePlayPause() }) {
+                    Icon(
+                        if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (state.isPlaying) "Пауза" else "Играть",
+                        modifier = Modifier.size(32.dp),
+                    )
+                }
+                IconButton(onClick = { viewModel.skipToNext() }) {
+                    Icon(Icons.Default.SkipNext, contentDescription = "Следующий")
+                }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = state.title ?: "Без названия",
@@ -63,19 +76,6 @@ fun MiniPlayerBar(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                }
-                IconButton(onClick = { viewModel.skipToPrevious() }) {
-                    Icon(Icons.Default.SkipPrevious, contentDescription = "Предыдущий")
-                }
-                IconButton(onClick = { viewModel.togglePlayPause() }) {
-                    Icon(
-                        if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (state.isPlaying) "Пауза" else "Играть",
-                        modifier = Modifier.size(32.dp),
-                    )
-                }
-                IconButton(onClick = { viewModel.skipToNext() }) {
-                    Icon(Icons.Default.SkipNext, contentDescription = "Следующий")
                 }
             }
         }

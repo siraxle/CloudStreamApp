@@ -1,5 +1,6 @@
 package com.example.cloudstreamapp.data.playlist
 
+import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.core.database.dao.MediaMetadataDao
 import com.example.cloudstreamapp.core.database.dao.PlaylistDao
 import com.example.cloudstreamapp.core.database.entity.MediaMetadataEntity
@@ -24,6 +25,7 @@ import javax.inject.Singleton
 class PlaylistRepositoryImpl @Inject constructor(
     private val playlistDao: PlaylistDao,
     private val metadataDao: MediaMetadataDao,
+    private val cacheManager: MediaCacheManager,
 ) : PlaylistRepositoryPort {
 
     override fun getAll(): Flow<List<Playlist>> =
@@ -80,7 +82,10 @@ class PlaylistRepositoryImpl @Inject constructor(
         playlistDao.getItemsForPlaylist(playlistId).map { items ->
             items.map { itemEntity ->
                 val meta = metadataDao.getById(itemEntity.mediaId)
-                itemEntity.toDomain() to meta?.toCloudItem()
+                val cloudItem = meta?.toCloudItem()?.let { item ->
+                    item.copy(cacheStatus = cacheManager.getCacheStatus(item.id, item.sizeBytes))
+                }
+                itemEntity.toDomain() to cloudItem
             }
         }
 

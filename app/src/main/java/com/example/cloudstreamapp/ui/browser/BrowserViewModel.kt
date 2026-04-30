@@ -3,11 +3,15 @@ package com.example.cloudstreamapp.ui.browser
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.ExistingWorkPolicy
+import androidx.work.WorkManager
 import com.example.cloudstreamapp.core.utils.isMediaFile
+import com.example.cloudstreamapp.core.worker.PlaylistCacheWorker
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.CloudPath
 import com.example.cloudstreamapp.domain.model.Playlist
+import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import com.example.cloudstreamapp.domain.port.SourceRepositoryPort
 import com.example.cloudstreamapp.domain.usecase.ListFolderUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -19,11 +23,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -35,6 +39,8 @@ class BrowserViewModel @Inject constructor(
     private val listFolder: ListFolderUseCase,
     private val sourceRepo: SourceRepositoryPort,
     private val playlistRepo: PlaylistRepositoryImpl,
+    private val settingsRepo: SettingsRepositoryPort,
+    private val workManager: WorkManager,
 ) : ViewModel() {
 
     private val sourceId: String = checkNotNull(savedStateHandle["sourceId"])
@@ -119,6 +125,7 @@ class BrowserViewModel @Inject constructor(
     fun addToPlaylist(item: CloudItem, playlistId: String) {
         viewModelScope.launch {
             playlistRepo.saveMediaAndAddToPlaylist(item, playlistId)
+            enqueueCache(playlistId)
             _playlistMessage.value = "«${item.name}» добавлен в плейлист"
         }
     }
@@ -130,6 +137,7 @@ class BrowserViewModel @Inject constructor(
                 it.type == CloudItem.ItemType.FILE && it.name.isMediaFile()
             }
             mediaFiles.forEach { playlistRepo.saveMediaAndAddToPlaylist(it, playlistId) }
+            enqueueCache(playlistId)
             _playlistMessage.value = "Добавлено ${mediaFiles.size} файлов из «${folder.name}»"
         }
     }
@@ -145,6 +153,7 @@ class BrowserViewModel @Inject constructor(
             )
             playlistRepo.create(playlist)
             playlistRepo.saveMediaAndAddToPlaylist(item, playlist.id)
+            enqueueCache(playlist.id)
             _playlistMessage.value = "Плейлист «$name» создан"
         }
     }
@@ -160,7 +169,17 @@ class BrowserViewModel @Inject constructor(
             )
             playlistRepo.create(playlist)
             addFolderToPlaylist(folder, playlist.id)
+            // enqueueCache вызывается внутри addFolderToPlaylist
         }
+    }
+
+    private suspend fun enqueueCache(playlistId: String) {
+        val wifiOnly = settingsRepo.wifiOnlyPrefetch.first()
+        workManager.enqueueUniqueWork(
+            PlaylistCacheWorker.workName(playlistId),
+            ExistingWorkPolicy.REPLACE,
+            PlaylistCacheWorker.buildRequest(playlistId, wifiOnly),
+        )
     }
 
     fun dismissPlaylistMessage() { _playlistMessage.value = null }

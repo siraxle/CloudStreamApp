@@ -168,6 +168,7 @@ class PlayerViewModel @Inject constructor(
                                 MediaItem.Builder()
                                     .setUri(url)
                                     .setMediaId(item.id)
+                                    .setCustomCacheKey(item.id)
                                     .setMediaMetadata(
                                         MediaMetadata.Builder().setTitle(item.name).build()
                                     )
