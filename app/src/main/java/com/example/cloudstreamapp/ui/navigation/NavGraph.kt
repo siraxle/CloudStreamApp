@@ -11,6 +11,7 @@ import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.ui.browser.BrowserScreen
 import com.example.cloudstreamapp.ui.home.HomeScreen
 import com.example.cloudstreamapp.ui.player.PlayerScreen
+import com.example.cloudstreamapp.ui.playlist.PlaylistDetailScreen
 import com.example.cloudstreamapp.ui.playlist.PlaylistsScreen
 import com.example.cloudstreamapp.ui.search.SearchScreen
 import com.example.cloudstreamapp.ui.settings.SettingsScreen
@@ -72,7 +73,30 @@ fun NavGraph(
         }
 
         composable(Screen.Playlists.route) {
-            PlaylistsScreen()
+            PlaylistsScreen(
+                onPlaylistClick = { id ->
+                    navController.navigate(Screen.PlaylistDetail.createRoute(id))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.PlaylistDetail.route,
+            arguments = listOf(navArgument("playlistId") { type = NavType.StringType }),
+        ) {
+            PlaylistDetailScreen(
+                onBack = { navController.popBackStack() },
+                onPlayItem = { item ->
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            cloudType = item.path.cloudType.name,
+                            sourceUrl = item.path.sourceId,
+                            itemPath = item.path.relativePath,
+                            itemName = item.name,
+                        )
+                    )
+                },
+            )
         }
 
         composable(Screen.Search.route) {

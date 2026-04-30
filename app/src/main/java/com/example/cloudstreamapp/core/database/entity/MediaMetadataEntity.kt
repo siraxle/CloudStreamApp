@@ -8,6 +8,7 @@ data class MediaMetadataEntity(
     @PrimaryKey val id: String,
     val sourceId: String,
     val path: String,
+    val cloudType: String = "HTTP",
     val title: String?,
     val artist: String?,
     val album: String?,

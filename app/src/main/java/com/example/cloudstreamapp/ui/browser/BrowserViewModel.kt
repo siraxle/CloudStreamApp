@@ -3,8 +3,10 @@ package com.example.cloudstreamapp.ui.browser
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.CloudPath
+import com.example.cloudstreamapp.domain.model.Playlist
 import com.example.cloudstreamapp.domain.port.SourceRepositoryPort
 import com.example.cloudstreamapp.domain.usecase.ListFolderUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -20,6 +22,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.UUID
 import javax.inject.Inject
 
 @HiltViewModel
@@ -27,6 +30,7 @@ class BrowserViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val listFolder: ListFolderUseCase,
     private val sourceRepo: SourceRepositoryPort,
+    private val playlistRepo: PlaylistRepositoryImpl,
 ) : ViewModel() {
 
     private val sourceId: String = checkNotNull(savedStateHandle["sourceId"])
@@ -87,4 +91,35 @@ class BrowserViewModel @Inject constructor(
     }
 
     fun dismissError() { _error.value = null }
+
+    // Playlists
+    val playlists: StateFlow<List<Playlist>> = playlistRepo.getAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _playlistMessage = MutableStateFlow<String?>(null)
+    val playlistMessage: StateFlow<String?> = _playlistMessage.asStateFlow()
+
+    fun addToPlaylist(item: CloudItem, playlistId: String) {
+        viewModelScope.launch {
+            playlistRepo.saveMediaAndAddToPlaylist(item, playlistId)
+            _playlistMessage.value = "Добавлено в плейлист"
+        }
+    }
+
+    fun createPlaylistAndAdd(item: CloudItem, name: String) {
+        viewModelScope.launch {
+            val playlist = com.example.cloudstreamapp.domain.model.Playlist(
+                id = UUID.randomUUID().toString(),
+                name = name,
+                coverPath = null,
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis(),
+            )
+            playlistRepo.create(playlist)
+            playlistRepo.saveMediaAndAddToPlaylist(item, playlist.id)
+            _playlistMessage.value = "Плейлист «$name» создан"
+        }
+    }
+
+    fun dismissPlaylistMessage() { _playlistMessage.value = null }
 }
