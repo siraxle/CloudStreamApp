@@ -1,12 +1,11 @@
 package com.example.cloudstreamapp.ui.browser
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,6 +19,9 @@ import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -56,6 +58,17 @@ import com.example.cloudstreamapp.core.utils.toHumanReadableSize
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.Playlist
 
+// What the user wants to add to a playlist
+private sealed class PlaylistTarget {
+    data class File(val item: CloudItem) : PlaylistTarget()
+    data class Folder(val item: CloudItem) : PlaylistTarget()
+
+    val displayName: String get() = when (this) {
+        is File -> item.name
+        is Folder -> "Папка «${item.name}»"
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(
@@ -72,7 +85,7 @@ fun BrowserScreen(
     val playlistMessage by viewModel.playlistMessage.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var addToPlaylistItem by remember { mutableStateOf<CloudItem?>(null) }
+    var playlistTarget by remember { mutableStateOf<PlaylistTarget?>(null) }
 
     BackHandler { if (!viewModel.navigateUp()) onBack() }
 
@@ -126,9 +139,12 @@ fun BrowserScreen(
                                     onPlayMedia(item)
                                 }
                             },
-                            onLongClick = {
-                                if (item.type == CloudItem.ItemType.FILE) {
-                                    addToPlaylistItem = item
+                            onPlay = { onPlayMedia(item) },
+                            onAddToPlaylist = {
+                                playlistTarget = if (item.type == CloudItem.ItemType.DIRECTORY) {
+                                    PlaylistTarget.Folder(item)
+                                } else {
+                                    PlaylistTarget.File(item)
                                 }
                             },
                         )
@@ -138,42 +154,75 @@ fun BrowserScreen(
         }
     }
 
-    addToPlaylistItem?.let { item ->
+    playlistTarget?.let { target ->
         AddToPlaylistDialog(
-            item = item,
+            targetName = target.displayName,
             playlists = playlists,
-            onDismiss = { addToPlaylistItem = null },
+            onDismiss = { playlistTarget = null },
             onSelectPlaylist = { playlistId ->
-                viewModel.addToPlaylist(item, playlistId)
-                addToPlaylistItem = null
+                when (target) {
+                    is PlaylistTarget.File -> viewModel.addToPlaylist(target.item, playlistId)
+                    is PlaylistTarget.Folder -> viewModel.addFolderToPlaylist(target.item, playlistId)
+                }
+                playlistTarget = null
             },
             onCreateNew = { name ->
-                viewModel.createPlaylistAndAdd(item, name)
-                addToPlaylistItem = null
+                when (target) {
+                    is PlaylistTarget.File -> viewModel.createPlaylistAndAdd(target.item, name)
+                    is PlaylistTarget.Folder -> viewModel.createPlaylistAndAddFolder(target.item, name)
+                }
+                playlistTarget = null
             },
         )
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CloudItemRow(
     item: CloudItem,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
+    onPlay: () -> Unit,
+    onAddToPlaylist: () -> Unit,
 ) {
+    val isFile = item.type == CloudItem.ItemType.FILE
     val icon = when {
-        item.type == CloudItem.ItemType.DIRECTORY -> Icons.Default.Folder
+        !isFile -> Icons.Default.Folder
         item.name.isAudioFile() -> Icons.Default.AudioFile
         item.name.isVideoFile() -> Icons.Default.VideoFile
         else -> Icons.AutoMirrored.Filled.InsertDriveFile
     }
 
+    var menuExpanded by remember { mutableStateOf(false) }
+
     ListItem(
         headlineContent = { Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = { item.sizeBytes?.let { Text(it.toHumanReadableSize()) } },
         leadingContent = { Icon(icon, contentDescription = null, modifier = Modifier.size(40.dp)) },
-        modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        trailingContent = {
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Действия")
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    if (isFile) {
+                        DropdownMenuItem(
+                            text = { Text("Воспроизвести") },
+                            leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+                            onClick = { menuExpanded = false; onPlay() },
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(if (isFile) "Добавить в плейлист" else "Добавить папку в плейлист") },
+                        leadingIcon = { Icon(Icons.Default.PlaylistAdd, contentDescription = null) },
+                        onClick = { menuExpanded = false; onAddToPlaylist() },
+                    )
+                }
+            }
+        },
+        modifier = Modifier.clickable(onClick = onClick),
     )
 }
 
@@ -200,13 +249,13 @@ private fun Breadcrumbs(
 
 @Composable
 private fun AddToPlaylistDialog(
-    item: CloudItem,
+    targetName: String,
     playlists: List<Playlist>,
     onDismiss: () -> Unit,
     onSelectPlaylist: (String) -> Unit,
     onCreateNew: (String) -> Unit,
 ) {
-    var showNewPlaylistField by rememberSaveable { mutableStateOf(false) }
+    var showNewField by rememberSaveable { mutableStateOf(false) }
     var newName by rememberSaveable { mutableStateOf("") }
 
     AlertDialog(
@@ -215,25 +264,21 @@ private fun AddToPlaylistDialog(
         text = {
             Column {
                 Text(
-                    text = item.name,
-                    maxLines = 1,
+                    text = targetName,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
-
                 if (playlists.isNotEmpty()) {
                     playlists.forEach { playlist ->
                         TextButton(
                             onClick = { onSelectPlaylist(playlist.id) },
                             modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(playlist.name)
-                        }
+                        ) { Text(playlist.name) }
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                 }
-
-                if (showNewPlaylistField) {
+                if (showNewField) {
                     OutlinedTextField(
                         value = newName,
                         onValueChange = { newName = it },
@@ -243,23 +288,19 @@ private fun AddToPlaylistDialog(
                     )
                 } else {
                     TextButton(
-                        onClick = { showNewPlaylistField = true },
+                        onClick = { showNewField = true },
                         modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("+ Новый плейлист")
-                    }
+                    ) { Text("+ Новый плейлист") }
                 }
             }
         },
         confirmButton = {
-            if (showNewPlaylistField) {
+            if (showNewField) {
                 TextButton(
                     onClick = { if (newName.isNotBlank()) onCreateNew(newName.trim()) },
                 ) { Text("Создать") }
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Отмена") }
-        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
     )
 }

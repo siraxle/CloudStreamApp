@@ -3,6 +3,7 @@ package com.example.cloudstreamapp.ui.browser
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.cloudstreamapp.core.utils.isMediaFile
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.CloudPath
@@ -10,6 +11,7 @@ import com.example.cloudstreamapp.domain.model.Playlist
 import com.example.cloudstreamapp.domain.port.SourceRepositoryPort
 import com.example.cloudstreamapp.domain.usecase.ListFolderUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -20,6 +22,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -102,13 +105,24 @@ class BrowserViewModel @Inject constructor(
     fun addToPlaylist(item: CloudItem, playlistId: String) {
         viewModelScope.launch {
             playlistRepo.saveMediaAndAddToPlaylist(item, playlistId)
-            _playlistMessage.value = "Добавлено в плейлист"
+            _playlistMessage.value = "«${item.name}» добавлен в плейлист"
+        }
+    }
+
+    fun addFolderToPlaylist(folder: CloudItem, playlistId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val allItems = listFolder(folder.path).first()
+            val mediaFiles = allItems.filter {
+                it.type == CloudItem.ItemType.FILE && it.name.isMediaFile()
+            }
+            mediaFiles.forEach { playlistRepo.saveMediaAndAddToPlaylist(it, playlistId) }
+            _playlistMessage.value = "Добавлено ${mediaFiles.size} файлов из «${folder.name}»"
         }
     }
 
     fun createPlaylistAndAdd(item: CloudItem, name: String) {
         viewModelScope.launch {
-            val playlist = com.example.cloudstreamapp.domain.model.Playlist(
+            val playlist = Playlist(
                 id = UUID.randomUUID().toString(),
                 name = name,
                 coverPath = null,
@@ -118,6 +132,20 @@ class BrowserViewModel @Inject constructor(
             playlistRepo.create(playlist)
             playlistRepo.saveMediaAndAddToPlaylist(item, playlist.id)
             _playlistMessage.value = "Плейлист «$name» создан"
+        }
+    }
+
+    fun createPlaylistAndAddFolder(folder: CloudItem, name: String) {
+        viewModelScope.launch {
+            val playlist = Playlist(
+                id = UUID.randomUUID().toString(),
+                name = name,
+                coverPath = null,
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis(),
+            )
+            playlistRepo.create(playlist)
+            addFolderToPlaylist(folder, playlist.id)
         }
     }
 
