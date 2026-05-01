@@ -37,4 +37,12 @@ interface PlaylistDao {
 
     @Query("UPDATE playlist_items SET position = :position WHERE id = :id")
     suspend fun updateItemPosition(id: String, position: Int)
+
+    // One-shot read (no Flow) for pre-deletion cleanup
+    @Query("SELECT * FROM playlist_items WHERE playlistId = :playlistId ORDER BY position ASC")
+    suspend fun getItemsOnce(playlistId: String): List<PlaylistItemEntity>
+
+    // Count how many OTHER playlists reference this mediaId (used to decide cache eviction)
+    @Query("SELECT COUNT(*) FROM playlist_items WHERE mediaId = :mediaId AND playlistId != :excludePlaylistId")
+    suspend fun countOtherReferences(mediaId: String, excludePlaylistId: String): Int
 }

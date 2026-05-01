@@ -49,8 +49,9 @@ fun PlaylistDetailScreen(
 ) {
     val tracks by viewModel.tracks.collectAsState()
     val name by viewModel.playlistName.collectAsState()
-    val isDownloading by viewModel.isDownloading.collectAsState()
-    val downloadProgress by viewModel.downloadProgress.collectAsState()
+    val downloadStates by viewModel.itemDownloadStates.collectAsState()
+
+    val activeDownloads = downloadStates.values.count { it is PlaylistDetailViewModel.ItemDownloadState.InProgress }
 
     Scaffold(
         topBar = {
@@ -63,15 +64,9 @@ fun PlaylistDetailScreen(
                 title = {
                     Column {
                         Text(name)
-                        if (isDownloading) {
-                            val pct = downloadProgress
-                            val subtitle = if (pct != null) {
-                                "Загрузка… ${(pct * 100).toInt()}%"
-                            } else {
-                                "Загрузка на устройство…"
-                            }
+                        if (activeDownloads > 0) {
                             Text(
-                                text = subtitle,
+                                text = "Загрузка $activeDownloads файлов…",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -100,96 +95,125 @@ fun PlaylistDetailScreen(
                     modifier = Modifier.align(Alignment.Center),
                 )
             } else {
-                Column {
-                    if (isDownloading) {
-                        val pct = downloadProgress
-                        if (pct != null) {
-                            LinearProgressIndicator(
-                                progress = { pct },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        } else {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                LazyColumn {
+                    itemsIndexed(tracks, key = { _, row -> row.item.id }) { index, row ->
+                        val cloudItem = row.cloudItem
+                        val displayName = cloudItem?.name ?: "Неизвестный трек"
+                        val itemState = if (cloudItem != null) downloadStates[cloudItem.id] else null
+                        val isInProgress = itemState is PlaylistDetailViewModel.ItemDownloadState.InProgress
+                        val isDone = itemState is PlaylistDetailViewModel.ItemDownloadState.Done
+                        val isCached = cloudItem?.cacheStatus == CacheStatus.CACHED
+
+                        val icon = when {
+                            cloudItem == null -> Icons.AutoMirrored.Filled.InsertDriveFile
+                            cloudItem.name.isAudioFile() -> Icons.Default.AudioFile
+                            cloudItem.name.isVideoFile() -> Icons.Default.VideoFile
+                            else -> Icons.AutoMirrored.Filled.InsertDriveFile
                         }
-                    }
-                    LazyColumn {
-                        itemsIndexed(tracks, key = { _, row -> row.item.id }) { index, row ->
-                            val cloudItem = row.cloudItem
-                            val displayName = cloudItem?.name ?: "Неизвестный трек"
-                            val icon = when {
-                                cloudItem == null -> Icons.AutoMirrored.Filled.InsertDriveFile
-                                cloudItem.name.isAudioFile() -> Icons.Default.AudioFile
-                                cloudItem.name.isVideoFile() -> Icons.Default.VideoFile
-                                else -> Icons.AutoMirrored.Filled.InsertDriveFile
-                            }
-                            val iconTint = when (cloudItem?.cacheStatus) {
-                                CacheStatus.CACHED -> MaterialTheme.colorScheme.tertiary
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            }
-                            val supportingText = when (cloudItem?.cacheStatus) {
-                                CacheStatus.CACHED -> "На устройстве"
-                                CacheStatus.PARTIAL -> "Загружается..."
-                                else -> cloudItem?.sizeBytes?.let { bytes ->
-                                    when {
-                                        bytes >= 1024L * 1024 -> "${bytes / 1024 / 1024} МБ"
-                                        bytes >= 1024 -> "${bytes / 1024} КБ"
-                                        else -> null
+                        val iconTint = when {
+                            isCached || isDone -> MaterialTheme.colorScheme.tertiary
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+
+                        ListItem(
+                            headlineContent = {
+                                Text(displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            },
+                            supportingContent = when {
+                                isInProgress -> {
+                                    val pct = (itemState as PlaylistDetailViewModel.ItemDownloadState.InProgress).progress
+                                    {
+                                        Column {
+                                            Text(
+                                                text = if (pct != null) "${(pct * 100).toInt()}%" else "Загрузка…",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                            )
+                                            if (pct != null) {
+                                                LinearProgressIndicator(
+                                                    progress = { pct },
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(top = 4.dp),
+                                                )
+                                            } else {
+                                                LinearProgressIndicator(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(top = 4.dp),
+                                                )
+                                            }
+                                        }
                                     }
                                 }
-                            }
-                            val supportingColor = when (cloudItem?.cacheStatus) {
-                                CacheStatus.CACHED -> MaterialTheme.colorScheme.tertiary
-                                CacheStatus.PARTIAL -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            }
-                            ListItem(
-                                headlineContent = {
-                                    Text(displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                },
-                                supportingContent = supportingText?.let { text ->
+                                isCached || isDone -> {
                                     {
                                         Text(
-                                            text = text,
+                                            text = "На устройстве",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = supportingColor,
+                                            color = MaterialTheme.colorScheme.tertiary,
                                         )
                                     }
-                                },
-                                leadingContent = {
-                                    Icon(
-                                        icon,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(40.dp),
-                                        tint = iconTint,
-                                    )
-                                },
-                                trailingContent = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        when (cloudItem?.cacheStatus) {
-                                            CacheStatus.CACHED -> Icon(
-                                                imageVector = Icons.Default.OfflinePin,
-                                                contentDescription = "На устройстве",
-                                                modifier = Modifier.size(20.dp),
-                                                tint = MaterialTheme.colorScheme.tertiary,
-                                            )
-                                            CacheStatus.PARTIAL -> Icon(
-                                                imageVector = Icons.Default.Downloading,
-                                                contentDescription = "Загружается",
-                                                modifier = Modifier.size(20.dp),
-                                                tint = MaterialTheme.colorScheme.primary,
-                                            )
-                                            else -> Unit
-                                        }
-                                        IconButton(onClick = { viewModel.removeTrack(row.item.id) }) {
-                                            Icon(Icons.Default.Delete, contentDescription = "Удалить из плейлиста")
+                                }
+                                else -> {
+                                    val sizeText = cloudItem?.sizeBytes?.let { bytes ->
+                                        when {
+                                            bytes >= 1024L * 1024 -> "${bytes / 1024 / 1024} МБ"
+                                            bytes >= 1024 -> "${bytes / 1024} КБ"
+                                            else -> null
                                         }
                                     }
-                                },
-                                modifier = Modifier.clickable(enabled = cloudItem != null) {
-                                    onPlayTrack(index)
-                                },
-                            )
-                        }
+                                    sizeText?.let { text ->
+                                        {
+                                            Text(
+                                                text = text,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                            leadingContent = {
+                                Icon(
+                                    icon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(40.dp),
+                                    tint = iconTint,
+                                )
+                            },
+                            trailingContent = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    when {
+                                        isCached || isDone -> Icon(
+                                            imageVector = Icons.Default.OfflinePin,
+                                            contentDescription = "На устройстве",
+                                            modifier = Modifier.size(20.dp),
+                                            tint = MaterialTheme.colorScheme.tertiary,
+                                        )
+                                        isInProgress -> Icon(
+                                            imageVector = Icons.Default.Downloading,
+                                            contentDescription = "Загружается",
+                                            modifier = Modifier.size(20.dp),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                        cloudItem?.cacheStatus == CacheStatus.PARTIAL -> Icon(
+                                            imageVector = Icons.Default.Downloading,
+                                            contentDescription = "Частично загружен",
+                                            modifier = Modifier.size(20.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        else -> Unit
+                                    }
+                                    IconButton(onClick = { viewModel.removeTrack(row.item.id) }) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Удалить из плейлиста")
+                                    }
+                                }
+                            },
+                            modifier = Modifier.clickable(enabled = cloudItem != null) {
+                                onPlayTrack(index)
+                            },
+                        )
                     }
                 }
             }

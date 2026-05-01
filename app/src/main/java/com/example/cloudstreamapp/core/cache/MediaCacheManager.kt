@@ -40,6 +40,16 @@ class MediaCacheManager @Inject constructor(
         }
     }
 
+    fun removeCachedFile(key: String) {
+        if (released) return
+        try {
+            // toList() prevents ConcurrentModificationException while removing spans
+            simpleCache.getCachedSpans(key).toList().forEach { span ->
+                try { simpleCache.removeSpan(span) } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
+
     fun release() {
         if (!released) {
             simpleCache.release()

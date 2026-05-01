@@ -14,6 +14,7 @@ import com.example.cloudstreamapp.domain.model.Playlist
 import com.example.cloudstreamapp.domain.model.PlaylistItem
 import com.example.cloudstreamapp.domain.port.PlaylistRepositoryPort
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -27,6 +28,9 @@ class PlaylistRepositoryImpl @Inject constructor(
     private val metadataDao: MediaMetadataDao,
     private val cacheManager: MediaCacheManager,
 ) : PlaylistRepositoryPort {
+
+    // Incremented whenever media_metadata is written so flows re-read fresh sizeBytes
+    private val _metadataVersion = MutableStateFlow(0)
 
     override fun getAll(): Flow<List<Playlist>> =
         playlistDao.getAll().map { list -> list.map { it.toDomain() } }
@@ -43,8 +47,22 @@ class PlaylistRepositoryImpl @Inject constructor(
     override suspend fun update(playlist: Playlist) =
         playlistDao.update(playlist.toEntity())
 
-    override suspend fun delete(id: String) =
+    override suspend fun delete(id: String) {
+        // Snapshot items before cascade deletion removes them
+        val items = playlistDao.getItemsOnce(id)
+
+        // Cascade-delete playlist + all its playlist_items
         playlistDao.deleteById(id)
+
+        // Clean up cache and metadata for tracks not referenced by any other playlist
+        for (item in items) {
+            val otherRefs = playlistDao.countOtherReferences(item.mediaId, id)
+            if (otherRefs == 0) {
+                cacheManager.removeCachedFile(item.mediaId)
+                metadataDao.deleteById(item.mediaId)
+            }
+        }
+    }
 
     override suspend fun addItem(item: PlaylistItem) =
         playlistDao.insertItem(item.toEntity())
@@ -60,6 +78,11 @@ class PlaylistRepositoryImpl @Inject constructor(
         if (existing == null) {
             metadataDao.insert(cloudItem.toMetadataEntity())
         }
+    }
+
+    suspend fun updateSizeBytes(mediaId: String, sizeBytes: Long) {
+        metadataDao.updateSizeBytes(mediaId, sizeBytes)
+        _metadataVersion.value++
     }
 
     suspend fun saveMediaAndAddToPlaylist(cloudItem: CloudItem, playlistId: String) {
@@ -85,32 +108,42 @@ class PlaylistRepositoryImpl @Inject constructor(
         }
     }
 
+    // Reacts to both playlist_items changes AND media_metadata updates (_metadataVersion)
     fun getItemsWithMetadata(playlistId: String): Flow<List<Pair<PlaylistItem, CloudItem?>>> =
-        playlistDao.getItemsForPlaylist(playlistId).map { items ->
-            items.map { itemEntity ->
-                val meta = metadataDao.getById(itemEntity.mediaId)
-                val cloudItem = meta?.toCloudItem()?.let { item ->
-                    item.copy(cacheStatus = cacheManager.getCacheStatus(item.id, item.sizeBytes))
+        combine(
+            playlistDao.getItemsForPlaylist(playlistId),
+            _metadataVersion,
+        ) { items, _ -> items }
+            .map { items ->
+                items.map { itemEntity ->
+                    val meta = metadataDao.getById(itemEntity.mediaId)
+                    val cloudItem = meta?.toCloudItem()?.let { item ->
+                        item.copy(cacheStatus = cacheManager.getCacheStatus(item.id, item.sizeBytes))
+                    }
+                    itemEntity.toDomain() to cloudItem
                 }
-                itemEntity.toDomain() to cloudItem
             }
-        }
 
-    // Returns Triple(total, cached, downloading) for the playlist list screen
+    // Returns Triple(total, cached, downloading) for the playlist list screen.
+    // Also reacts to _metadataVersion so counts update after downloads complete.
     fun getItemCacheStats(playlistId: String): Flow<Triple<Int, Int, Int>> =
-        playlistDao.getItemsForPlaylist(playlistId).map { items ->
-            var total = 0; var cached = 0; var partial = 0
-            for (itemEntity in items) {
-                total++
-                val meta = metadataDao.getById(itemEntity.mediaId)
-                when (cacheManager.getCacheStatus(itemEntity.mediaId, meta?.sizeBytes)) {
-                    CacheStatus.CACHED -> cached++
-                    CacheStatus.PARTIAL -> partial++
-                    else -> {}
+        combine(
+            playlistDao.getItemsForPlaylist(playlistId),
+            _metadataVersion,
+        ) { items, _ -> items }
+            .map { items ->
+                var total = 0; var cached = 0; var partial = 0
+                for (itemEntity in items) {
+                    total++
+                    val meta = metadataDao.getById(itemEntity.mediaId)
+                    when (cacheManager.getCacheStatus(itemEntity.mediaId, meta?.sizeBytes)) {
+                        CacheStatus.CACHED -> cached++
+                        CacheStatus.PARTIAL -> partial++
+                        else -> {}
+                    }
                 }
+                Triple(total, cached, partial)
             }
-            Triple(total, cached, partial)
-        }
 
     // --- Mappers ---
 

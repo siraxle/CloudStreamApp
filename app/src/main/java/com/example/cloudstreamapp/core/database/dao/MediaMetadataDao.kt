@@ -21,6 +21,12 @@ interface MediaMetadataDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(metadata: MediaMetadataEntity)
 
+    @Query("UPDATE media_metadata SET sizeBytes = :sizeBytes WHERE id = :id")
+    suspend fun updateSizeBytes(id: String, sizeBytes: Long)
+
+    @Query("DELETE FROM media_metadata WHERE id = :id")
+    suspend fun deleteById(id: String)
+
     @Query("DELETE FROM media_metadata WHERE sourceId = :sourceId")
     suspend fun deleteBySource(sourceId: String)
 }

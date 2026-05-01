@@ -17,7 +17,6 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.CacheStatus
-import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import com.example.cloudstreamapp.domain.usecase.GetStreamUrlUseCase
 import dagger.assisted.Assisted
@@ -49,11 +48,17 @@ class PlaylistCacheWorker @AssistedInject constructor(
             .mapNotNull { (_, cloudItem) -> cloudItem }
             .filter { it.cacheStatus != CacheStatus.CACHED }
 
+        // Report total immediately so the progress bar appears as soon as the worker starts
+        setProgress(workDataOf(PROGRESS_INDEX to 0, PROGRESS_TOTAL to toDownload.size))
+
         var processed = 0
 
         for (batch in toDownload.chunked(PARALLEL_DOWNLOADS)) {
             if (isStopped) break
             if (simpleCache.cacheSpace >= cacheLimit) break
+
+            // Announce the batch start so the UI ticks before waiting for network
+            setProgress(workDataOf(PROGRESS_INDEX to processed, PROGRESS_TOTAL to toDownload.size))
 
             // Download batch items in parallel; wait for all before next batch
             coroutineScope {
@@ -64,7 +69,11 @@ class PlaylistCacheWorker @AssistedInject constructor(
                         if (fileSize > 0 && simpleCache.cacheSpace + fileSize > cacheLimit) return@launch
                         try {
                             val url = getStreamUrl(cloudItem) ?: return@launch
-                            downloadToCache(cloudItem.id, url)
+                            val downloadedBytes = downloadToCache(cloudItem.id, url)
+                            // Persist file size so getCacheStatus can return CACHED next time
+                            if (cloudItem.sizeBytes == null && downloadedBytes > 0) {
+                                playlistRepo.updateSizeBytes(cloudItem.id, downloadedBytes)
+                            }
                         } catch (_: Exception) {
                             // Skip file on error, continue with the rest
                         }
@@ -79,7 +88,8 @@ class PlaylistCacheWorker @AssistedInject constructor(
         return Result.success()
     }
 
-    private suspend fun downloadToCache(key: String, url: String) = withContext(Dispatchers.IO) {
+    // Returns the number of bytes written to cache (Content-Length if available, else bytes counted)
+    private suspend fun downloadToCache(key: String, url: String): Long = withContext(Dispatchers.IO) {
         val dataSource = CacheDataSource.Factory()
             .setCache(simpleCache)
             .setUpstreamDataSourceFactory(OkHttpDataSource.Factory(okHttpClient))
@@ -91,15 +101,18 @@ class PlaylistCacheWorker @AssistedInject constructor(
             .build()
 
         val buffer = ByteArray(128 * 1024)
-        dataSource.open(dataSpec)
+        val declaredLength = dataSource.open(dataSpec)
+        var bytesRead = 0L
         try {
             while (!isStopped) {
                 val read = dataSource.read(buffer, 0, buffer.size)
                 if (read == C.RESULT_END_OF_INPUT) break
+                if (read > 0) bytesRead += read
             }
         } finally {
             dataSource.close()
         }
+        if (declaredLength > 0) declaredLength else bytesRead
     }
 
     companion object {
