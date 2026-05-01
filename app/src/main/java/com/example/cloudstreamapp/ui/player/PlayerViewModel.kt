@@ -11,6 +11,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.CacheStatus
 import com.example.cloudstreamapp.domain.model.CloudItem
@@ -32,7 +33,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
 import javax.inject.Inject
 
 @HiltViewModel
@@ -41,12 +41,12 @@ class PlayerViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val getStreamUrl: GetStreamUrlUseCase,
     private val playlistRepo: PlaylistRepositoryImpl,
+    private val cacheManager: MediaCacheManager,
 ) : ViewModel() {
 
     private var controller: MediaController? = null
-    // Buffered while controller is still connecting (single-file mode)
-    private var pendingPlay: Pair<String, String?>? = null
-    // Buffered while controller is still connecting (playlist mode)
+    // Pending media to play once the controller connects
+    private var pendingMediaItem: MediaItem? = null
     private var pendingPlaylist: Pair<List<MediaItem>, Int>? = null
 
     private val _playerState = MutableStateFlow(PlayerState())
@@ -83,9 +83,9 @@ class PlayerViewModel @Inject constructor(
                 controller?.addListener(playerListener)
                 _player.value = controller
                 updateState()
-                pendingPlay?.let { (url, title) ->
-                    enqueuePlay(url, title)
-                    pendingPlay = null
+                pendingMediaItem?.let { item ->
+                    playMediaItem(item)
+                    pendingMediaItem = null
                 }
                 pendingPlaylist?.let { (items, index) ->
                     enqueuePlaylist(items, index)
@@ -104,6 +104,7 @@ class PlayerViewModel @Inject constructor(
         val sourceUrl = savedStateHandle.get<String>("encodedSourceUrl") ?: return
         val itemPath = savedStateHandle.get<String>("encodedItemPath") ?: return
         val itemName = savedStateHandle.get<String>("encodedItemName") ?: ""
+        val mediaId = savedStateHandle.get<String>("encodedMediaId") ?: return
 
         _playerState.value = _playerState.value.copy(title = itemName)
 
@@ -111,7 +112,7 @@ class PlayerViewModel @Inject constructor(
             try {
                 val cloudType = CloudType.valueOf(cloudTypeStr)
                 val item = CloudItem(
-                    id = UUID.nameUUIDFromBytes("$sourceUrl:$itemPath".toByteArray()).toString(),
+                    id = mediaId,
                     name = itemName,
                     path = CloudPath(
                         sourceId = sourceUrl,
@@ -119,10 +120,17 @@ class PlayerViewModel @Inject constructor(
                         cloudType = cloudType,
                     ),
                     type = CloudItem.ItemType.FILE,
-                    cacheStatus = CacheStatus.REMOTE,
                 )
-                val url = getStreamUrl(item) ?: error("Провайдер не вернул URL для $itemName")
-                withContext(Dispatchers.Main) { playUrl(url, itemName) }
+                val url = runCatching { getStreamUrl(item) }.getOrNull()
+                withContext(Dispatchers.Main) {
+                    if (url != null) {
+                        playMediaItem(buildOnlineMediaItem(item, url))
+                    } else if (cacheManager.getCacheStatus(mediaId, null) == CacheStatus.CACHED) {
+                        playMediaItem(buildOfflineMediaItem(mediaId, itemName))
+                    } else {
+                        _error.value = "Нет соединения, файл не скачан для офлайн-воспроизведения"
+                    }
+                }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     _error.value = e.message ?: "Не удалось получить ссылку"
@@ -141,7 +149,6 @@ class PlayerViewModel @Inject constructor(
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Load all tracks from Room
                 val pairs = playlistRepo.getItemsWithMetadata(playlistId).first()
                 val cloudItems = pairs.mapNotNull { (_, cloudItem) -> cloudItem }
 
@@ -153,28 +160,21 @@ class PlayerViewModel @Inject constructor(
                     return@launch
                 }
 
-                // Show title immediately for responsiveness
                 val firstItem = cloudItems.getOrElse(startIndex) { cloudItems[0] }
                 withContext(Dispatchers.Main) {
                     _playerState.value = _playerState.value.copy(title = firstItem.name)
                 }
 
-                // Resolve all stream URLs in parallel
+                // Resolve all stream URLs in parallel; fall back to cache for offline items
                 val mediaItems: List<MediaItem> = coroutineScope {
                     cloudItems.map { item ->
                         async {
-                            try {
-                                val url = getStreamUrl(item) ?: return@async null
-                                MediaItem.Builder()
-                                    .setUri(url)
-                                    .setMediaId(item.id)
-                                    .setCustomCacheKey(item.id)
-                                    .setMediaMetadata(
-                                        MediaMetadata.Builder().setTitle(item.name).build()
-                                    )
-                                    .build()
-                            } catch (e: Exception) {
-                                null
+                            val url = runCatching { getStreamUrl(item) }.getOrNull()
+                            when {
+                                url != null -> buildOnlineMediaItem(item, url)
+                                item.cacheStatus == CacheStatus.CACHED ->
+                                    buildOfflineMediaItem(item.id, item.name)
+                                else -> null
                             }
                         }
                     }.awaitAll()
@@ -183,17 +183,21 @@ class PlayerViewModel @Inject constructor(
                 if (mediaItems.isEmpty()) {
                     withContext(Dispatchers.Main) {
                         _isLoadingPlaylist.value = false
-                        _error.value = "Не удалось получить ссылки для воспроизведения"
+                        _error.value = "Нет доступных треков: подключитесь к сети или скачайте треки заранее"
                     }
                     return@launch
                 }
 
-                // Adjust startIndex after filtering failed items
                 val actualStart = startIndex.coerceIn(0, mediaItems.size - 1)
 
                 withContext(Dispatchers.Main) {
                     _isLoadingPlaylist.value = false
-                    setPlaylistAndPlay(mediaItems, actualStart)
+                    val c = controller
+                    if (c == null) {
+                        pendingPlaylist = Pair(mediaItems, actualStart)
+                    } else {
+                        enqueuePlaylist(mediaItems, actualStart)
+                    }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -204,13 +208,40 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private fun setPlaylistAndPlay(items: List<MediaItem>, startIndex: Int) {
+    // ── MediaItem builders ────────────────────────────────────────────────────
+
+    private fun buildOnlineMediaItem(item: CloudItem, url: String) =
+        MediaItem.Builder()
+            .setUri(url)
+            .setMediaId(item.id)
+            .setCustomCacheKey(item.id)
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(item.name).build())
+            .build()
+
+    /** Placeholder URI — CacheDataSource serves data from SimpleCache by CustomCacheKey. */
+    private fun buildOfflineMediaItem(mediaId: String, title: String) =
+        MediaItem.Builder()
+            .setUri("https://offline.cache/$mediaId")
+            .setMediaId(mediaId)
+            .setCustomCacheKey(mediaId)
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
+            .build()
+
+    // ── Common player logic ───────────────────────────────────────────────────
+
+    private fun playMediaItem(mediaItem: MediaItem) {
         val c = controller
         if (c == null) {
-            pendingPlaylist = Pair(items, startIndex)
+            pendingMediaItem = mediaItem
             return
         }
-        enqueuePlaylist(items, startIndex)
+        c.setMediaItem(mediaItem)
+        c.prepare()
+        c.play()
+        val title = mediaItem.mediaMetadata.title?.toString()
+        if (title != null) {
+            _playerState.value = _playerState.value.copy(title = title, hasMedia = true)
+        }
     }
 
     private fun enqueuePlaylist(items: List<MediaItem>, startIndex: Int) {
@@ -220,8 +251,6 @@ class PlayerViewModel @Inject constructor(
         c.play()
         _playerState.value = _playerState.value.copy(hasMedia = true)
     }
-
-    // ── Common player logic ───────────────────────────────────────────────────
 
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) = updateState()
@@ -265,25 +294,11 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun playUrl(url: String, title: String? = null) {
-        val c = controller
-        if (c == null) {
-            pendingPlay = Pair(url, title)
-            return
-        }
-        enqueuePlay(url, title)
-    }
-
-    private fun enqueuePlay(url: String, title: String?) {
         val mediaItem = MediaItem.Builder()
             .setUri(url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
             .build()
-        controller?.setMediaItem(mediaItem)
-        controller?.prepare()
-        controller?.play()
-        if (title != null) {
-            _playerState.value = _playerState.value.copy(title = title, hasMedia = true)
-        }
+        playMediaItem(mediaItem)
     }
 
     fun seekBy(deltaMs: Long) {

@@ -53,6 +53,7 @@ fun NavGraph(
                             sourceUrl = item.path.sourceId,
                             itemPath = item.path.relativePath,
                             itemName = item.name,
+                            mediaId = item.id,
                         )
                     ) { launchSingleTop = true }
                 },
@@ -67,6 +68,7 @@ fun NavGraph(
                 navArgument("encodedSourceUrl") { type = NavType.StringType },
                 navArgument("encodedItemPath") { type = NavType.StringType },
                 navArgument("encodedItemName") { type = NavType.StringType },
+                navArgument("encodedMediaId") { type = NavType.StringType },
             ),
         ) {
             PlayerScreen(onBack = { navController.popBackStack() })
@@ -114,6 +116,7 @@ fun NavGraph(
                             sourceUrl = item.path.sourceId,
                             itemPath = item.path.relativePath,
                             itemName = item.name,
+                            mediaId = item.id,
                         )
                     ) { launchSingleTop = true }
                 }

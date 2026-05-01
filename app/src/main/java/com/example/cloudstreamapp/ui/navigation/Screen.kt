@@ -9,14 +9,15 @@ sealed class Screen(val route: String) {
             "browser/$sourceId/$encodedPath"
     }
     object Player : Screen(
-        "player/{cloudType}/{encodedSourceUrl}/{encodedItemPath}/{encodedItemName}"
+        "player/{cloudType}/{encodedSourceUrl}/{encodedItemPath}/{encodedItemName}/{encodedMediaId}"
     ) {
         fun createRoute(
             cloudType: String,
             sourceUrl: String,
             itemPath: String,
             itemName: String,
-        ): String = "player/$cloudType/${Uri.encode(sourceUrl)}/${Uri.encode(itemPath)}/${Uri.encode(itemName)}"
+            mediaId: String,
+        ): String = "player/$cloudType/${Uri.encode(sourceUrl)}/${Uri.encode(itemPath)}/${Uri.encode(itemName)}/${Uri.encode(mediaId)}"
     }
     object PlaylistPlayer : Screen("player/playlist/{playlistId}/{startIndex}") {
         fun createRoute(playlistId: String, startIndex: Int) =
