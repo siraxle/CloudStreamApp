@@ -55,6 +55,13 @@ class PlaylistRepositoryImpl @Inject constructor(
     override suspend fun moveItem(itemId: String, newPosition: Int) =
         playlistDao.updateItemPosition(itemId, newPosition)
 
+    suspend fun saveMediaMetadata(cloudItem: CloudItem) {
+        val existing = metadataDao.get(cloudItem.path.sourceId, cloudItem.path.relativePath)
+        if (existing == null) {
+            metadataDao.insert(cloudItem.toMetadataEntity())
+        }
+    }
+
     suspend fun saveMediaAndAddToPlaylist(cloudItem: CloudItem, playlistId: String) {
         val mediaId = cloudItem.id
         val existing = metadataDao.get(cloudItem.path.sourceId, cloudItem.path.relativePath)

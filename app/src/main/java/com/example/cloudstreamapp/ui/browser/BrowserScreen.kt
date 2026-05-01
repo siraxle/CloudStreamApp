@@ -23,13 +23,16 @@ import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -61,9 +64,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.material3.MaterialTheme
 import com.example.cloudstreamapp.core.utils.isAudioFile
 import com.example.cloudstreamapp.core.utils.isVideoFile
 import com.example.cloudstreamapp.core.utils.toHumanReadableSize
+import com.example.cloudstreamapp.domain.model.CacheStatus
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.Playlist
 
@@ -195,6 +200,7 @@ fun BrowserScreen(
                                     PlaylistTarget.File(item)
                                 }
                             },
+                            onCacheFile = { viewModel.cacheFile(item) },
                         )
                     }
                 }
@@ -217,6 +223,7 @@ fun BrowserScreen(
                                     PlaylistTarget.File(item)
                                 }
                             },
+                            onCacheFile = { viewModel.cacheFile(item) },
                         )
                     }
                 }
@@ -252,6 +259,7 @@ private fun CloudItemCard(
     item: CloudItem,
     onClick: () -> Unit,
     onAddToPlaylist: () -> Unit,
+    onCacheFile: () -> Unit,
 ) {
     val isFile = item.type == CloudItem.ItemType.FILE
     val icon = when {
@@ -269,6 +277,18 @@ private fun CloudItemCard(
         ) {
             Box {
                 Icon(icon, contentDescription = null, modifier = Modifier.size(56.dp).align(Alignment.Center))
+                // Cache status badge
+                if (isFile && item.cacheStatus != CacheStatus.REMOTE) {
+                    Icon(
+                        imageVector = if (item.cacheStatus == CacheStatus.CACHED) Icons.Default.OfflinePin else Icons.Default.Downloading,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp).align(Alignment.BottomStart),
+                        tint = if (item.cacheStatus == CacheStatus.CACHED)
+                            MaterialTheme.colorScheme.tertiary
+                        else
+                            MaterialTheme.colorScheme.primary,
+                    )
+                }
                 Box(modifier = Modifier.align(Alignment.TopEnd)) {
                     IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(24.dp)) {
                         Icon(Icons.Default.MoreVert, contentDescription = "Действия", modifier = Modifier.size(16.dp))
@@ -279,6 +299,13 @@ private fun CloudItemCard(
                             leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, contentDescription = null) },
                             onClick = { menuExpanded = false; onAddToPlaylist() },
                         )
+                        if (isFile && item.cacheStatus != CacheStatus.CACHED) {
+                            DropdownMenuItem(
+                                text = { Text("Кэшировать") },
+                                leadingIcon = { Icon(Icons.Default.SaveAlt, contentDescription = null) },
+                                onClick = { menuExpanded = false; onCacheFile() },
+                            )
+                        }
                     }
                 }
             }
@@ -286,7 +313,7 @@ private fun CloudItemCard(
                 text = item.name,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
     }
@@ -298,6 +325,7 @@ private fun CloudItemRow(
     onClick: () -> Unit,
     onPlay: () -> Unit,
     onAddToPlaylist: () -> Unit,
+    onCacheFile: () -> Unit,
 ) {
     val isFile = item.type == CloudItem.ItemType.FILE
     val icon = when {
@@ -314,26 +342,47 @@ private fun CloudItemRow(
         supportingContent = { item.sizeBytes?.let { Text(it.toHumanReadableSize()) } },
         leadingContent = { Icon(icon, contentDescription = null, modifier = Modifier.size(40.dp)) },
         trailingContent = {
-            Box {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "Действия")
-                }
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false },
-                ) {
-                    if (isFile) {
-                        DropdownMenuItem(
-                            text = { Text("Воспроизвести") },
-                            leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
-                            onClick = { menuExpanded = false; onPlay() },
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text(if (isFile) "Добавить в плейлист" else "Добавить папку в плейлист") },
-                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, contentDescription = null) },
-                        onClick = { menuExpanded = false; onAddToPlaylist() },
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Cache status icon
+                if (isFile && item.cacheStatus != CacheStatus.REMOTE) {
+                    Icon(
+                        imageVector = if (item.cacheStatus == CacheStatus.CACHED) Icons.Default.OfflinePin else Icons.Default.Downloading,
+                        contentDescription = if (item.cacheStatus == CacheStatus.CACHED) "Доступно офлайн" else "Загружается",
+                        modifier = Modifier.size(18.dp),
+                        tint = if (item.cacheStatus == CacheStatus.CACHED)
+                            MaterialTheme.colorScheme.tertiary
+                        else
+                            MaterialTheme.colorScheme.primary,
                     )
+                }
+                Box {
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Действия")
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                    ) {
+                        if (isFile) {
+                            DropdownMenuItem(
+                                text = { Text("Воспроизвести") },
+                                leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+                                onClick = { menuExpanded = false; onPlay() },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text(if (isFile) "Добавить в плейлист" else "Добавить папку в плейлист") },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, contentDescription = null) },
+                            onClick = { menuExpanded = false; onAddToPlaylist() },
+                        )
+                        if (isFile && item.cacheStatus != CacheStatus.CACHED) {
+                            DropdownMenuItem(
+                                text = { Text("Кэшировать") },
+                                leadingIcon = { Icon(Icons.Default.SaveAlt, contentDescription = null) },
+                                onClick = { menuExpanded = false; onCacheFile() },
+                            )
+                        }
+                    }
                 }
             }
         },

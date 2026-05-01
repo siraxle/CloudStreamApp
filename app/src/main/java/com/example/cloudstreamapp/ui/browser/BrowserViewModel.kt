@@ -5,8 +5,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkManager
+import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.core.utils.isMediaFile
 import com.example.cloudstreamapp.core.worker.PlaylistCacheWorker
+import com.example.cloudstreamapp.core.worker.SingleFileCacheWorker
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.CloudPath
@@ -41,6 +43,7 @@ class BrowserViewModel @Inject constructor(
     private val playlistRepo: PlaylistRepositoryImpl,
     private val settingsRepo: SettingsRepositoryPort,
     private val workManager: WorkManager,
+    private val cacheManager: MediaCacheManager,
 ) : ViewModel() {
 
     private val sourceId: String = checkNotNull(savedStateHandle["sourceId"])
@@ -92,6 +95,13 @@ class BrowserViewModel @Inject constructor(
                     emit(emptyList())
                 }
         }
+        .map { list ->
+            list.map { item ->
+                if (item.type == CloudItem.ItemType.FILE) {
+                    item.copy(cacheStatus = cacheManager.getCacheStatus(item.id, item.sizeBytes))
+                } else item
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun navigateTo(path: String) {
@@ -121,6 +131,18 @@ class BrowserViewModel @Inject constructor(
 
     private val _playlistMessage = MutableStateFlow<String?>(null)
     val playlistMessage: StateFlow<String?> = _playlistMessage.asStateFlow()
+
+    fun cacheFile(item: CloudItem) {
+        viewModelScope.launch {
+            playlistRepo.saveMediaMetadata(item)
+            workManager.enqueueUniqueWork(
+                SingleFileCacheWorker.workName(item.id),
+                ExistingWorkPolicy.KEEP,
+                SingleFileCacheWorker.buildRequest(item.id),
+            )
+            _playlistMessage.value = "«${item.name}» добавляется в кэш"
+        }
+    }
 
     fun addToPlaylist(item: CloudItem, playlistId: String) {
         viewModelScope.launch {

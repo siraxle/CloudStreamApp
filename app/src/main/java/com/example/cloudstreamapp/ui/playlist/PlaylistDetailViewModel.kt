@@ -93,6 +93,17 @@ class PlaylistDetailViewModel @Inject constructor(
         }
     }
 
+    fun triggerDownload() {
+        viewModelScope.launch {
+            val wifiOnly = settingsRepo.wifiOnlyPrefetch.first()
+            workManager.enqueueUniqueWork(
+                workerTag,
+                ExistingWorkPolicy.REPLACE,
+                PlaylistCacheWorker.buildRequest(playlistId, wifiOnly),
+            )
+        }
+    }
+
     fun removeTrack(itemId: String) {
         viewModelScope.launch { repo.removeItem(itemId) }
     }

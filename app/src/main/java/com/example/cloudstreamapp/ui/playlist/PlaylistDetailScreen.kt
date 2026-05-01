@@ -15,6 +15,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DownloadForOffline
 import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.VideoFile
@@ -68,6 +69,14 @@ fun PlaylistDetailScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { viewModel.triggerDownload() }) {
+                        Icon(
+                            Icons.Default.DownloadForOffline,
+                            contentDescription = "Скачать все для офлайн",
+                        )
                     }
                 },
             )
