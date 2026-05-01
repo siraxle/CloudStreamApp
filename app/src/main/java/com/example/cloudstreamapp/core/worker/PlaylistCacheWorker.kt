@@ -17,12 +17,15 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.CacheStatus
+import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import com.example.cloudstreamapp.domain.usecase.GetStreamUrlUseCase
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 
@@ -46,22 +49,31 @@ class PlaylistCacheWorker @AssistedInject constructor(
             .mapNotNull { (_, cloudItem) -> cloudItem }
             .filter { it.cacheStatus != CacheStatus.CACHED }
 
-        for ((index, cloudItem) in toDownload.withIndex()) {
+        var processed = 0
+
+        for (batch in toDownload.chunked(PARALLEL_DOWNLOADS)) {
             if (isStopped) break
+            if (simpleCache.cacheSpace >= cacheLimit) break
 
-            // Stop if adding this file would exceed the cache limit
-            val usedBytes = simpleCache.cacheSpace
-            val fileSize = cloudItem.sizeBytes ?: 0L
-            if (fileSize > 0 && usedBytes + fileSize > cacheLimit) break
-
-            try {
-                val url = getStreamUrl(cloudItem) ?: continue
-                downloadToCache(cloudItem.id, url)
-            } catch (_: Exception) {
-                // Skip track on error, continue with the next one
+            // Download batch items in parallel; wait for all before next batch
+            coroutineScope {
+                batch.forEach { cloudItem ->
+                    launch(Dispatchers.IO) {
+                        if (isStopped) return@launch
+                        val fileSize = cloudItem.sizeBytes ?: 0L
+                        if (fileSize > 0 && simpleCache.cacheSpace + fileSize > cacheLimit) return@launch
+                        try {
+                            val url = getStreamUrl(cloudItem) ?: return@launch
+                            downloadToCache(cloudItem.id, url)
+                        } catch (_: Exception) {
+                            // Skip file on error, continue with the rest
+                        }
+                    }
+                }
             }
 
-            setProgress(workDataOf(PROGRESS_INDEX to index))
+            processed += batch.size
+            setProgress(workDataOf(PROGRESS_INDEX to processed, PROGRESS_TOTAL to toDownload.size))
         }
 
         return Result.success()
@@ -93,6 +105,8 @@ class PlaylistCacheWorker @AssistedInject constructor(
     companion object {
         const val KEY_PLAYLIST_ID = "playlist_id"
         const val PROGRESS_INDEX = "progress_index"
+        const val PROGRESS_TOTAL = "progress_total"
+        private const val PARALLEL_DOWNLOADS = 3
 
         fun workName(playlistId: String) = "playlist_cache_$playlistId"
 

@@ -50,6 +50,7 @@ fun PlaylistDetailScreen(
     val tracks by viewModel.tracks.collectAsState()
     val name by viewModel.playlistName.collectAsState()
     val isDownloading by viewModel.isDownloading.collectAsState()
+    val downloadProgress by viewModel.downloadProgress.collectAsState()
 
     Scaffold(
         topBar = {
@@ -63,8 +64,14 @@ fun PlaylistDetailScreen(
                     Column {
                         Text(name)
                         if (isDownloading) {
+                            val pct = downloadProgress
+                            val subtitle = if (pct != null) {
+                                "Загрузка… ${(pct * 100).toInt()}%"
+                            } else {
+                                "Загрузка на устройство…"
+                            }
                             Text(
-                                text = "Загрузка на устройство…",
+                                text = subtitle,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -95,7 +102,15 @@ fun PlaylistDetailScreen(
             } else {
                 Column {
                     if (isDownloading) {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        val pct = downloadProgress
+                        if (pct != null) {
+                            LinearProgressIndicator(
+                                progress = { pct },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
                     }
                     LazyColumn {
                         itemsIndexed(tracks, key = { _, row -> row.item.id }) { index, row ->

@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/** Fraction [0f..1f] of download progress, or null when not downloading. */
+
 @HiltViewModel
 class PlaylistDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
@@ -44,6 +46,10 @@ class PlaylistDetailViewModel @Inject constructor(
 
     private val _isDownloading = MutableStateFlow(false)
     val isDownloading: StateFlow<Boolean> = _isDownloading.asStateFlow()
+
+    // null = not downloading, 0f..1f = fraction complete
+    private val _downloadProgress = MutableStateFlow<Float?>(null)
+    val downloadProgress: StateFlow<Float?> = _downloadProgress.asStateFlow()
 
     val tracks: StateFlow<List<TrackRow>> = combine(
         repo.getItemsWithMetadata(playlistId),
@@ -86,8 +92,16 @@ class PlaylistDetailViewModel @Inject constructor(
         viewModelScope.launch {
             workManager.getWorkInfosForUniqueWorkFlow(workerTag)
                 .collect { infos ->
-                    _isDownloading.value = infos.any { it.state == WorkInfo.State.RUNNING }
-                    // Each WorkInfo change (progress update or completion) refreshes icons
+                    val running = infos.any { it.state == WorkInfo.State.RUNNING }
+                    _isDownloading.value = running
+                    if (running) {
+                        val info = infos.firstOrNull { it.state == WorkInfo.State.RUNNING }
+                        val done = info?.progress?.getInt(PlaylistCacheWorker.PROGRESS_INDEX, 0) ?: 0
+                        val total = info?.progress?.getInt(PlaylistCacheWorker.PROGRESS_TOTAL, 0) ?: 0
+                        _downloadProgress.value = if (total > 0) done.toFloat() / total else null
+                    } else {
+                        _downloadProgress.value = null
+                    }
                     _cacheTick.value++
                 }
         }
