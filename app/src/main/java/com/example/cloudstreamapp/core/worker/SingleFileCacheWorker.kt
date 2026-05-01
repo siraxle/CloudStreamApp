@@ -19,10 +19,12 @@ import com.example.cloudstreamapp.core.database.dao.MediaMetadataDao
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.CloudPath
 import com.example.cloudstreamapp.domain.model.CloudType
+import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import com.example.cloudstreamapp.domain.usecase.GetStreamUrlUseCase
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 
@@ -34,17 +36,23 @@ class SingleFileCacheWorker @AssistedInject constructor(
     private val getStreamUrl: GetStreamUrlUseCase,
     private val simpleCache: SimpleCache,
     private val okHttpClient: OkHttpClient,
+    private val settingsRepo: SettingsRepositoryPort,
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
         val mediaId = inputData.getString(KEY_MEDIA_ID) ?: return Result.failure()
         val entity = metadataDao.getById(mediaId) ?: return Result.failure()
 
-        // Skip if already fully cached
         val sizeBytes = entity.sizeBytes
         if (sizeBytes != null && simpleCache.getCachedBytes(mediaId, 0, sizeBytes) >= sizeBytes) {
             return Result.success()
         }
+
+        // Enforce 2 GB limit
+        val cacheLimit = settingsRepo.cacheLimitBytes.first()
+        val usedBytes = simpleCache.cacheSpace
+        if (usedBytes >= cacheLimit) return Result.success()
+        if (sizeBytes != null && usedBytes + sizeBytes > cacheLimit) return Result.success()
 
         val cloudItem = CloudItem(
             id = entity.id,

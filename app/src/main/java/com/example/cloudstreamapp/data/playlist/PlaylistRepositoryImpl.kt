@@ -96,6 +96,22 @@ class PlaylistRepositoryImpl @Inject constructor(
             }
         }
 
+    // Returns Triple(total, cached, downloading) for the playlist list screen
+    fun getItemCacheStats(playlistId: String): Flow<Triple<Int, Int, Int>> =
+        playlistDao.getItemsForPlaylist(playlistId).map { items ->
+            var total = 0; var cached = 0; var partial = 0
+            for (itemEntity in items) {
+                total++
+                val meta = metadataDao.getById(itemEntity.mediaId)
+                when (cacheManager.getCacheStatus(itemEntity.mediaId, meta?.sizeBytes)) {
+                    CacheStatus.CACHED -> cached++
+                    CacheStatus.PARTIAL -> partial++
+                    else -> {}
+                }
+            }
+            Triple(total, cached, partial)
+        }
+
     // --- Mappers ---
 
     private fun PlaylistEntity.toDomain(items: List<PlaylistItem> = emptyList()) = Playlist(

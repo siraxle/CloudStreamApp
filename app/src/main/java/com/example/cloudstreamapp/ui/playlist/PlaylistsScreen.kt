@@ -1,16 +1,20 @@
 package com.example.cloudstreamapp.ui.playlist
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Downloading
+import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -18,6 +22,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -31,8 +36,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.example.cloudstreamapp.domain.model.Playlist
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,11 +68,11 @@ fun PlaylistsScreen(
                 )
             } else {
                 LazyColumn {
-                    items(playlists, key = { it.id }) { playlist ->
+                    items(playlists, key = { it.playlist.id }) { item ->
                         PlaylistRow(
-                            playlist = playlist,
-                            onClick = { onPlaylistClick(playlist.id) },
-                            onDelete = { viewModel.deletePlaylist(playlist.id) },
+                            item = item,
+                            onClick = { onPlaylistClick(item.playlist.id) },
+                            onDelete = { viewModel.deletePlaylist(item.playlist.id) },
                         )
                     }
                 }
@@ -88,13 +93,50 @@ fun PlaylistsScreen(
 
 @Composable
 private fun PlaylistRow(
-    playlist: Playlist,
+    item: PlaylistsViewModel.PlaylistUiItem,
     onClick: () -> Unit,
     onDelete: () -> Unit,
 ) {
     ListItem(
-        headlineContent = { Text(playlist.name) },
-        supportingContent = { Text("${playlist.items.size} треков") },
+        headlineContent = { Text(item.playlist.name) },
+        supportingContent = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = pluralTracks(item.totalTracks),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (item.cachedTracks > 0) {
+                    Icon(
+                        Icons.Default.OfflinePin,
+                        contentDescription = "На устройстве",
+                        modifier = Modifier.size(13.dp),
+                        tint = MaterialTheme.colorScheme.tertiary,
+                    )
+                    Text(
+                        text = "${item.cachedTracks}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+                if (item.downloadingTracks > 0) {
+                    Icon(
+                        Icons.Default.Downloading,
+                        contentDescription = "Загружается",
+                        modifier = Modifier.size(13.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = "${item.downloadingTracks}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        },
         leadingContent = { Icon(Icons.Default.QueueMusic, contentDescription = null) },
         trailingContent = {
             IconButton(onClick = onDelete) {
@@ -103,6 +145,13 @@ private fun PlaylistRow(
         },
         modifier = Modifier.clickable(onClick = onClick),
     )
+}
+
+private fun pluralTracks(count: Int): String = when {
+    count % 100 in 11..19 -> "$count треков"
+    count % 10 == 1 -> "$count трек"
+    count % 10 in 2..4 -> "$count трека"
+    else -> "$count треков"
 }
 
 @Composable

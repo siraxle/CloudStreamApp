@@ -64,7 +64,7 @@ fun PlaylistDetailScreen(
                         Text(name)
                         if (isDownloading) {
                             Text(
-                                text = "Загрузка в кэш…",
+                                text = "Загрузка на устройство…",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -75,7 +75,7 @@ fun PlaylistDetailScreen(
                     IconButton(onClick = { viewModel.triggerDownload() }) {
                         Icon(
                             Icons.Default.DownloadForOffline,
-                            contentDescription = "Скачать все для офлайн",
+                            contentDescription = "Скачать все на устройство",
                         )
                     }
                 },
@@ -107,26 +107,60 @@ fun PlaylistDetailScreen(
                                 cloudItem.name.isVideoFile() -> Icons.Default.VideoFile
                                 else -> Icons.AutoMirrored.Filled.InsertDriveFile
                             }
+                            val iconTint = when (cloudItem?.cacheStatus) {
+                                CacheStatus.CACHED -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                            val supportingText = when (cloudItem?.cacheStatus) {
+                                CacheStatus.CACHED -> "На устройстве"
+                                CacheStatus.PARTIAL -> "Загружается..."
+                                else -> cloudItem?.sizeBytes?.let { bytes ->
+                                    when {
+                                        bytes >= 1024L * 1024 -> "${bytes / 1024 / 1024} МБ"
+                                        bytes >= 1024 -> "${bytes / 1024} КБ"
+                                        else -> null
+                                    }
+                                }
+                            }
+                            val supportingColor = when (cloudItem?.cacheStatus) {
+                                CacheStatus.CACHED -> MaterialTheme.colorScheme.tertiary
+                                CacheStatus.PARTIAL -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
                             ListItem(
                                 headlineContent = {
                                     Text(displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 },
+                                supportingContent = supportingText?.let { text ->
+                                    {
+                                        Text(
+                                            text = text,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = supportingColor,
+                                        )
+                                    }
+                                },
                                 leadingContent = {
-                                    Icon(icon, contentDescription = null, modifier = Modifier.size(40.dp))
+                                    Icon(
+                                        icon,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(40.dp),
+                                        tint = iconTint,
+                                    )
                                 },
                                 trailingContent = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         when (cloudItem?.cacheStatus) {
                                             CacheStatus.CACHED -> Icon(
                                                 imageVector = Icons.Default.OfflinePin,
-                                                contentDescription = "Доступно офлайн",
-                                                modifier = Modifier.size(18.dp),
+                                                contentDescription = "На устройстве",
+                                                modifier = Modifier.size(20.dp),
                                                 tint = MaterialTheme.colorScheme.tertiary,
                                             )
                                             CacheStatus.PARTIAL -> Icon(
                                                 imageVector = Icons.Default.Downloading,
-                                                contentDescription = "Частично загружено",
-                                                modifier = Modifier.size(18.dp),
+                                                contentDescription = "Загружается",
+                                                modifier = Modifier.size(20.dp),
                                                 tint = MaterialTheme.colorScheme.primary,
                                             )
                                             else -> Unit
