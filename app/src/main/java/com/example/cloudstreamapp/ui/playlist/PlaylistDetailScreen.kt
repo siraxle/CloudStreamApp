@@ -36,8 +36,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.work.WorkInfo
 import com.example.cloudstreamapp.core.utils.isAudioFile
 import com.example.cloudstreamapp.core.utils.isVideoFile
+import com.example.cloudstreamapp.core.worker.PlaylistCacheWorker
 import com.example.cloudstreamapp.domain.model.CacheStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,9 +51,10 @@ fun PlaylistDetailScreen(
 ) {
     val tracks by viewModel.tracks.collectAsState()
     val name by viewModel.playlistName.collectAsState()
-    val downloadStates by viewModel.itemDownloadStates.collectAsState()
-
-    val activeDownloads = downloadStates.values.count { it is PlaylistDetailViewModel.ItemDownloadState.InProgress }
+    val workInfo by viewModel.workInfo.collectAsState()
+    val isDownloading = workInfo?.state == WorkInfo.State.RUNNING || workInfo?.state == WorkInfo.State.ENQUEUED
+    val progressIndex = workInfo?.progress?.getInt(PlaylistCacheWorker.PROGRESS_INDEX, 0) ?: 0
+    val progressTotal = workInfo?.progress?.getInt(PlaylistCacheWorker.PROGRESS_TOTAL, 0) ?: 0
 
     Scaffold(
         topBar = {
@@ -64,9 +67,9 @@ fun PlaylistDetailScreen(
                 title = {
                     Column {
                         Text(name)
-                        if (activeDownloads > 0) {
+                        if (isDownloading) {
                             Text(
-                                text = "Загрузка $activeDownloads файлов…",
+                                text = if (progressTotal > 0) "Загрузка $progressIndex из $progressTotal" else "Загрузка…",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -99,10 +102,8 @@ fun PlaylistDetailScreen(
                     itemsIndexed(tracks, key = { _, row -> row.item.id }) { index, row ->
                         val cloudItem = row.cloudItem
                         val displayName = cloudItem?.name ?: "Неизвестный трек"
-                        val itemState = if (cloudItem != null) downloadStates[cloudItem.id] else null
-                        val isInProgress = itemState is PlaylistDetailViewModel.ItemDownloadState.InProgress
-                        val isDone = itemState is PlaylistDetailViewModel.ItemDownloadState.Done
                         val isCached = cloudItem?.cacheStatus == CacheStatus.CACHED
+                        val isInProgress = isDownloading && !isCached
 
                         val icon = when {
                             cloudItem == null -> Icons.AutoMirrored.Filled.InsertDriveFile
@@ -111,7 +112,7 @@ fun PlaylistDetailScreen(
                             else -> Icons.AutoMirrored.Filled.InsertDriveFile
                         }
                         val iconTint = when {
-                            isCached || isDone -> MaterialTheme.colorScheme.tertiary
+                            isCached -> MaterialTheme.colorScheme.tertiary
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
 
@@ -121,32 +122,22 @@ fun PlaylistDetailScreen(
                             },
                             supportingContent = when {
                                 isInProgress -> {
-                                    val pct = (itemState as PlaylistDetailViewModel.ItemDownloadState.InProgress).progress
                                     {
                                         Column {
                                             Text(
-                                                text = if (pct != null) "${(pct * 100).toInt()}%" else "Загрузка…",
+                                                text = "Загрузка…",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.primary,
                                             )
-                                            if (pct != null) {
-                                                LinearProgressIndicator(
-                                                    progress = { pct },
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(top = 4.dp),
-                                                )
-                                            } else {
-                                                LinearProgressIndicator(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(top = 4.dp),
-                                                )
-                                            }
+                                            LinearProgressIndicator(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(top = 4.dp),
+                                            )
                                         }
                                     }
                                 }
-                                isCached || isDone -> {
+                                isCached -> {
                                     {
                                         Text(
                                             text = "На устройстве",
@@ -185,7 +176,7 @@ fun PlaylistDetailScreen(
                             trailingContent = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     when {
-                                        isCached || isDone -> Icon(
+                                        isCached -> Icon(
                                             imageVector = Icons.Default.OfflinePin,
                                             contentDescription = "На устройстве",
                                             modifier = Modifier.size(20.dp),
