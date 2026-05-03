@@ -85,6 +85,10 @@ class PlaylistRepositoryImpl @Inject constructor(
         _metadataVersion.value++
     }
 
+    fun notifyDataChanged() {
+        _metadataVersion.value++
+    }
+
     suspend fun saveMediaAndAddToPlaylist(cloudItem: CloudItem, playlistId: String) {
         val mediaId = cloudItem.id
         val existing = metadataDao.get(cloudItem.path.sourceId, cloudItem.path.relativePath)

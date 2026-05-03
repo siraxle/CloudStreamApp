@@ -70,9 +70,11 @@ class PlaylistCacheWorker @AssistedInject constructor(
                         try {
                             val url = getStreamUrl(cloudItem) ?: return@launch
                             val downloadedBytes = downloadToCache(cloudItem.id, url)
-                            // Persist file size so getCacheStatus can return CACHED next time
                             if (cloudItem.sizeBytes == null && downloadedBytes > 0) {
                                 playlistRepo.updateSizeBytes(cloudItem.id, downloadedBytes)
+                            } else {
+                                // File size was already known — bump version so UI re-checks cache status
+                                playlistRepo.notifyDataChanged()
                             }
                         } catch (_: Exception) {
                             // Skip file on error, continue with the rest
