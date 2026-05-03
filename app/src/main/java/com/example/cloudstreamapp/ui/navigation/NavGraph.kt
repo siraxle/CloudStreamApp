@@ -7,7 +7,6 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.ui.browser.BrowserScreen
 import com.example.cloudstreamapp.ui.home.HomeScreen
 import com.example.cloudstreamapp.ui.player.PlayerScreen
@@ -46,13 +45,12 @@ fun NavGraph(
                 onNavigateToFolder = { sourceId, path ->
                     navController.navigate(Screen.Browser.createRoute(sourceId, path))
                 },
-                onPlayMedia = { item ->
+                onPlayMedia = { item, folderPath ->
                     navController.navigate(
-                        Screen.Player.createRoute(
+                        Screen.FolderPlayer.createRoute(
                             cloudType = item.path.cloudType.name,
                             sourceUrl = item.path.sourceId,
-                            itemPath = item.path.relativePath,
-                            itemName = item.name,
+                            folderPath = folderPath,
                             mediaId = item.id,
                         )
                     ) { launchSingleTop = true }
@@ -68,6 +66,18 @@ fun NavGraph(
                 navArgument("encodedSourceUrl") { type = NavType.StringType },
                 navArgument("encodedItemPath") { type = NavType.StringType },
                 navArgument("encodedItemName") { type = NavType.StringType },
+                navArgument("encodedMediaId") { type = NavType.StringType },
+            ),
+        ) {
+            PlayerScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(
+            route = Screen.FolderPlayer.route,
+            arguments = listOf(
+                navArgument("cloudType") { type = NavType.StringType },
+                navArgument("encodedSourceUrl") { type = NavType.StringType },
+                navArgument("encodedFolderPath") { type = NavType.StringType },
                 navArgument("encodedMediaId") { type = NavType.StringType },
             ),
         ) {

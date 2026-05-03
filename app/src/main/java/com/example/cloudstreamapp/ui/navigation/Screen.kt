@@ -23,6 +23,17 @@ sealed class Screen(val route: String) {
         fun createRoute(playlistId: String, startIndex: Int) =
             "player/playlist/$playlistId/$startIndex"
     }
+    // Folder browsing mode: loads all media files in the folder as a queue
+    object FolderPlayer : Screen(
+        "player/folder/{cloudType}/{encodedSourceUrl}/{encodedFolderPath}/{encodedMediaId}"
+    ) {
+        fun createRoute(
+            cloudType: String,
+            sourceUrl: String,
+            folderPath: String,
+            mediaId: String,
+        ): String = "player/folder/$cloudType/${Uri.encode(sourceUrl)}/${Uri.encode(folderPath)}/${Uri.encode(mediaId)}"
+    }
     object Playlists : Screen("playlists")
     object PlaylistDetail : Screen("playlist/{playlistId}") {
         fun createRoute(playlistId: String) = "playlist/$playlistId"

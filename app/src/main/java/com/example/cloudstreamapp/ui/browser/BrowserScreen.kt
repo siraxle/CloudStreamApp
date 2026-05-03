@@ -87,7 +87,7 @@ private sealed class PlaylistTarget {
 @Composable
 fun BrowserScreen(
     onNavigateToFolder: (sourceId: String, path: String) -> Unit,
-    onPlayMedia: (CloudItem) -> Unit,
+    onPlayMedia: (item: CloudItem, folderPath: String) -> Unit,
     onBack: () -> Unit,
     viewModel: BrowserViewModel = hiltViewModel(),
 ) {
@@ -190,7 +190,7 @@ fun BrowserScreen(
                                 if (item.type == CloudItem.ItemType.DIRECTORY) {
                                     viewModel.navigateTo(item.path.relativePath)
                                 } else {
-                                    onPlayMedia(item)
+                                    onPlayMedia(item, viewModel.currentPath)
                                 }
                             },
                             onAddToPlaylist = {
@@ -212,10 +212,10 @@ fun BrowserScreen(
                                 if (item.type == CloudItem.ItemType.DIRECTORY) {
                                     viewModel.navigateTo(item.path.relativePath)
                                 } else {
-                                    onPlayMedia(item)
+                                    onPlayMedia(item, viewModel.currentPath)
                                 }
                             },
-                            onPlay = { onPlayMedia(item) },
+                            onPlay = { onPlayMedia(item, viewModel.currentPath) },
                             onAddToPlaylist = {
                                 playlistTarget = if (item.type == CloudItem.ItemType.DIRECTORY) {
                                     PlaylistTarget.Folder(item)

@@ -12,12 +12,14 @@ import androidx.media3.common.VideoSize
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
+import com.example.cloudstreamapp.core.utils.isMediaFile
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.CacheStatus
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.CloudPath
 import com.example.cloudstreamapp.domain.model.CloudType
 import com.example.cloudstreamapp.domain.usecase.GetStreamUrlUseCase
+import com.example.cloudstreamapp.domain.usecase.ListFolderUseCase
 import com.example.cloudstreamapp.service.PlaybackService
 import com.google.common.util.concurrent.MoreExecutors
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -40,12 +42,12 @@ class PlayerViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
     @param:ApplicationContext private val context: Context,
     private val getStreamUrl: GetStreamUrlUseCase,
+    private val listFolder: ListFolderUseCase,
     private val playlistRepo: PlaylistRepositoryImpl,
     private val cacheManager: MediaCacheManager,
 ) : ViewModel() {
 
     private var controller: MediaController? = null
-    // Pending media to play once the controller connects
     private var pendingMediaItem: MediaItem? = null
     private var pendingPlaylist: Pair<List<MediaItem>, Int>? = null
 
@@ -64,10 +66,10 @@ class PlayerViewModel @Inject constructor(
     init {
         connectToService()
         startProgressUpdater()
-        if (savedStateHandle.get<String>("playlistId") != null) {
-            fetchAndPlayPlaylist()
-        } else {
-            fetchAndPlay()
+        when {
+            savedStateHandle.get<String>("playlistId") != null -> fetchAndPlayPlaylist()
+            savedStateHandle.get<String>("encodedFolderPath") != null -> fetchAndPlayFolder()
+            else -> fetchAndPlay()
         }
     }
 
@@ -97,7 +99,7 @@ class PlayerViewModel @Inject constructor(
         }, MoreExecutors.directExecutor())
     }
 
-    // ── Single-file mode (Browser / Search) ──────────────────────────────────
+    // ── Single-file mode (Search) ─────────────────────────────────────────────
 
     private fun fetchAndPlay() {
         val cloudTypeStr = savedStateHandle.get<String>("cloudType") ?: return
@@ -134,6 +136,86 @@ class PlayerViewModel @Inject constructor(
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     _error.value = e.message ?: "Не удалось получить ссылку"
+                }
+            }
+        }
+    }
+
+    // ── Folder mode (Browser) — loads all media files in the folder as a queue ─
+
+    private fun fetchAndPlayFolder() {
+        val cloudTypeStr = savedStateHandle.get<String>("cloudType") ?: return
+        val sourceUrl = savedStateHandle.get<String>("encodedSourceUrl") ?: return
+        val folderPath = savedStateHandle.get<String>("encodedFolderPath") ?: return
+        val mediaId = savedStateHandle.get<String>("encodedMediaId") ?: return
+
+        _isLoadingPlaylist.value = true
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val cloudType = CloudType.valueOf(cloudTypeStr)
+                val path = CloudPath(
+                    sourceId = sourceUrl,
+                    relativePath = folderPath,
+                    cloudType = cloudType,
+                )
+
+                val allItems = listFolder(path).first()
+                val mediaFiles = allItems
+                    .filter { it.type == CloudItem.ItemType.FILE && it.name.isMediaFile() }
+                    .sortedBy { it.name.lowercase() }
+
+                if (mediaFiles.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        _isLoadingPlaylist.value = false
+                        _error.value = "В папке нет медиафайлов"
+                    }
+                    return@launch
+                }
+
+                val clickedItem = mediaFiles.firstOrNull { it.id == mediaId } ?: mediaFiles.first()
+                withContext(Dispatchers.Main) {
+                    _playerState.value = _playerState.value.copy(title = clickedItem.name)
+                }
+
+                // Resolve all stream URLs in parallel
+                val mediaItems: List<MediaItem> = coroutineScope {
+                    mediaFiles.map { item ->
+                        async {
+                            val url = runCatching { getStreamUrl(item) }.getOrNull()
+                            when {
+                                url != null -> buildOnlineMediaItem(item, url)
+                                cacheManager.getCacheStatus(item.id, item.sizeBytes) == CacheStatus.CACHED ->
+                                    buildOfflineMediaItem(item.id, item.name)
+                                else -> null
+                            }
+                        }
+                    }.awaitAll()
+                }.filterNotNull()
+
+                if (mediaItems.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        _isLoadingPlaylist.value = false
+                        _error.value = "Нет доступных треков: подключитесь к сети или скачайте треки заранее"
+                    }
+                    return@launch
+                }
+
+                val startIndex = mediaItems.indexOfFirst { it.mediaId == mediaId }.coerceAtLeast(0)
+
+                withContext(Dispatchers.Main) {
+                    _isLoadingPlaylist.value = false
+                    val c = controller
+                    if (c == null) {
+                        pendingPlaylist = Pair(mediaItems, startIndex)
+                    } else {
+                        enqueuePlaylist(mediaItems, startIndex)
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _isLoadingPlaylist.value = false
+                    _error.value = e.message ?: "Не удалось загрузить треки папки"
                 }
             }
         }
