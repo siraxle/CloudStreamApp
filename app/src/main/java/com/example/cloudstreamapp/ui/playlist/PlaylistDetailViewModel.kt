@@ -70,10 +70,6 @@ class PlaylistDetailViewModel @Inject constructor(
 
     private var downloadJob: Job? = null
 
-    init {
-        startDownloadAll()
-    }
-
     fun triggerDownload() {
         downloadJob?.cancel()
         _itemStates.value = emptyMap()
