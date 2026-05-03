@@ -99,6 +99,27 @@ class PlayerViewModel @Inject constructor(
         }, MoreExecutors.directExecutor())
     }
 
+    // ── MediaItem resolvers ───────────────────────────────────────────────────
+    // Check cache FIRST — cached items skip the network call entirely.
+
+    /** Resolve a playlist item: uses item.cacheStatus (set by getItemsWithMetadata). */
+    private suspend fun resolvePlaylistItem(item: CloudItem): MediaItem? {
+        if (item.cacheStatus == CacheStatus.CACHED) {
+            return buildOfflineMediaItem(item.id, item.name)
+        }
+        val url = runCatching { getStreamUrl(item) }.getOrNull() ?: return null
+        return buildOnlineMediaItem(item, url)
+    }
+
+    /** Resolve a folder item: checks SimpleCache directly (cacheStatus not set by listFolder). */
+    private suspend fun resolveFolderItem(item: CloudItem): MediaItem? {
+        if (cacheManager.getCacheStatus(item.id, item.sizeBytes) == CacheStatus.CACHED) {
+            return buildOfflineMediaItem(item.id, item.name)
+        }
+        val url = runCatching { getStreamUrl(item) }.getOrNull() ?: return null
+        return buildOnlineMediaItem(item, url)
+    }
+
     // ── Single-file mode ──────────────────────────────────────────────────────
 
     private fun fetchAndPlay() {
@@ -138,8 +159,8 @@ class PlayerViewModel @Inject constructor(
     }
 
     // ── Folder mode (Browser) ─────────────────────────────────────────────────
-    // Phase 1: resolve clicked track → start playing immediately.
-    // Phase 2: resolve all other tracks in parallel → insert into queue without interruption.
+    // Phase 1: resolve clicked track (cache-first) → start immediately.
+    // Phase 2: resolve all other tracks in parallel (cache-first) → insert into queue.
 
     private fun fetchAndPlayFolder() {
         val cloudTypeStr = savedStateHandle.get<String>("cloudType") ?: return
@@ -174,10 +195,8 @@ class PlayerViewModel @Inject constructor(
                     _playerState.value = _playerState.value.copy(title = clickedItem.name)
                 }
 
-                // Phase 1: resolve only the clicked track and start immediately
-                val clickedUrl = runCatching { getStreamUrl(clickedItem) }.getOrNull()
-                val clickedMediaItem = buildFolderMediaItem(clickedItem, clickedUrl)
-
+                // Phase 1: cache-first resolve of the clicked track → start immediately
+                val clickedMediaItem = resolveFolderItem(clickedItem)
                 if (clickedMediaItem == null) {
                     withContext(Dispatchers.Main) {
                         _isLoadingPlaylist.value = false
@@ -192,17 +211,15 @@ class PlayerViewModel @Inject constructor(
                     if (c == null) pendingMediaItem = clickedMediaItem else playMediaItem(clickedMediaItem)
                 }
 
-                // Phase 2: resolve all other tracks in parallel and insert into queue
+                // Phase 2: resolve all other tracks in parallel (cached = no network)
                 if (mediaFiles.size > 1) {
                     var beforeItems: List<MediaItem> = emptyList()
                     var afterItems: List<MediaItem> = emptyList()
                     coroutineScope {
-                        val bd = mediaFiles.subList(0, clickedIndex).map { item ->
-                            async { buildFolderMediaItem(item, runCatching { getStreamUrl(item) }.getOrNull()) }
-                        }
-                        val ad = mediaFiles.subList(clickedIndex + 1, mediaFiles.size).map { item ->
-                            async { buildFolderMediaItem(item, runCatching { getStreamUrl(item) }.getOrNull()) }
-                        }
+                        val bd = mediaFiles.subList(0, clickedIndex)
+                            .map { item -> async { resolveFolderItem(item) } }
+                        val ad = mediaFiles.subList(clickedIndex + 1, mediaFiles.size)
+                            .map { item -> async { resolveFolderItem(item) } }
                         beforeItems = bd.awaitAll().filterNotNull()
                         afterItems = ad.awaitAll().filterNotNull()
                     }
@@ -223,8 +240,8 @@ class PlayerViewModel @Inject constructor(
     }
 
     // ── Playlist mode ─────────────────────────────────────────────────────────
-    // Phase 1: resolve clicked track → start playing immediately.
-    // Phase 2: resolve all other tracks in parallel → insert into queue without interruption.
+    // Phase 1: resolve clicked track (cache-first) → start immediately.
+    // Phase 2: resolve all other tracks in parallel (cache-first) → insert into queue.
 
     private fun fetchAndPlayPlaylist() {
         val playlistId = savedStateHandle.get<String>("playlistId") ?: return
@@ -252,10 +269,8 @@ class PlayerViewModel @Inject constructor(
                     _playerState.value = _playerState.value.copy(title = firstItem.name)
                 }
 
-                // Phase 1: resolve only the clicked track and start immediately
-                val firstUrl = runCatching { getStreamUrl(firstItem) }.getOrNull()
-                val firstMediaItem = buildPlaylistMediaItem(firstItem, firstUrl)
-
+                // Phase 1: cache-first resolve of the clicked track → start immediately
+                val firstMediaItem = resolvePlaylistItem(firstItem)
                 if (firstMediaItem == null) {
                     withContext(Dispatchers.Main) {
                         _isLoadingPlaylist.value = false
@@ -270,17 +285,15 @@ class PlayerViewModel @Inject constructor(
                     if (c == null) pendingMediaItem = firstMediaItem else playMediaItem(firstMediaItem)
                 }
 
-                // Phase 2: resolve remaining tracks in parallel and insert into queue
+                // Phase 2: resolve remaining tracks in parallel (cached = no network)
                 if (cloudItems.size > 1) {
                     var beforeItems: List<MediaItem> = emptyList()
                     var afterItems: List<MediaItem> = emptyList()
                     coroutineScope {
-                        val bd = cloudItems.subList(0, actualStart).map { item ->
-                            async { buildPlaylistMediaItem(item, runCatching { getStreamUrl(item) }.getOrNull()) }
-                        }
-                        val ad = cloudItems.subList(actualStart + 1, cloudItems.size).map { item ->
-                            async { buildPlaylistMediaItem(item, runCatching { getStreamUrl(item) }.getOrNull()) }
-                        }
+                        val bd = cloudItems.subList(0, actualStart)
+                            .map { item -> async { resolvePlaylistItem(item) } }
+                        val ad = cloudItems.subList(actualStart + 1, cloudItems.size)
+                            .map { item -> async { resolvePlaylistItem(item) } }
                         beforeItems = bd.awaitAll().filterNotNull()
                         afterItems = ad.awaitAll().filterNotNull()
                     }
@@ -318,19 +331,6 @@ class PlayerViewModel @Inject constructor(
             .setCustomCacheKey(mediaId)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
             .build()
-
-    private fun buildPlaylistMediaItem(item: CloudItem, url: String?): MediaItem? = when {
-        url != null -> buildOnlineMediaItem(item, url)
-        item.cacheStatus == CacheStatus.CACHED -> buildOfflineMediaItem(item.id, item.name)
-        else -> null
-    }
-
-    private fun buildFolderMediaItem(item: CloudItem, url: String?): MediaItem? = when {
-        url != null -> buildOnlineMediaItem(item, url)
-        cacheManager.getCacheStatus(item.id, item.sizeBytes) == CacheStatus.CACHED ->
-            buildOfflineMediaItem(item.id, item.name)
-        else -> null
-    }
 
     // ── Common player logic ───────────────────────────────────────────────────
 
