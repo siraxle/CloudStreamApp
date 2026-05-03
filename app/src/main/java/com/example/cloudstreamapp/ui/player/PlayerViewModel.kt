@@ -160,7 +160,11 @@ class PlayerViewModel @Inject constructor(
 
     // ── Folder mode (Browser) ─────────────────────────────────────────────────
     // Phase 1: resolve clicked track (cache-first) → start immediately.
-    // Phase 2: resolve all other tracks in parallel (cache-first) → insert into queue.
+    // Phase 2: resolve all other tracks in parallel → stitch into queue.
+    //
+    // If the controller hasn't connected by Phase 2 (fast on cached playlists),
+    // upgrade pendingMediaItem → pendingPlaylist so the full queue is applied
+    // once the controller becomes available.
 
     private fun fetchAndPlayFolder() {
         val cloudTypeStr = savedStateHandle.get<String>("cloudType") ?: return
@@ -195,7 +199,7 @@ class PlayerViewModel @Inject constructor(
                     _playerState.value = _playerState.value.copy(title = clickedItem.name)
                 }
 
-                // Phase 1: cache-first resolve of the clicked track → start immediately
+                // Phase 1: cache-first resolve of clicked track → start immediately
                 val clickedMediaItem = resolveFolderItem(clickedItem)
                 if (clickedMediaItem == null) {
                     withContext(Dispatchers.Main) {
@@ -211,23 +215,40 @@ class PlayerViewModel @Inject constructor(
                     if (c == null) pendingMediaItem = clickedMediaItem else playMediaItem(clickedMediaItem)
                 }
 
+                if (mediaFiles.size == 1) return@launch
+
                 // Phase 2: resolve all other tracks in parallel (cached = no network)
-                if (mediaFiles.size > 1) {
-                    var beforeItems: List<MediaItem> = emptyList()
-                    var afterItems: List<MediaItem> = emptyList()
-                    coroutineScope {
-                        val bd = mediaFiles.subList(0, clickedIndex)
-                            .map { item -> async { resolveFolderItem(item) } }
-                        val ad = mediaFiles.subList(clickedIndex + 1, mediaFiles.size)
-                            .map { item -> async { resolveFolderItem(item) } }
-                        beforeItems = bd.awaitAll().filterNotNull()
-                        afterItems = ad.awaitAll().filterNotNull()
-                    }
-                    withContext(Dispatchers.Main) {
-                        val c = controller ?: return@withContext
-                        if (c.mediaItemCount == 0) return@withContext
-                        if (beforeItems.isNotEmpty()) c.addMediaItems(0, beforeItems)
-                        if (afterItems.isNotEmpty()) c.addMediaItems(c.currentMediaItemIndex + 1, afterItems)
+                var beforeItems: List<MediaItem> = emptyList()
+                var afterItems: List<MediaItem> = emptyList()
+                coroutineScope {
+                    val bd = mediaFiles.subList(0, clickedIndex)
+                        .map { item -> async { resolveFolderItem(item) } }
+                    val ad = mediaFiles.subList(clickedIndex + 1, mediaFiles.size)
+                        .map { item -> async { resolveFolderItem(item) } }
+                    beforeItems = bd.awaitAll().filterNotNull()
+                    afterItems = ad.awaitAll().filterNotNull()
+                }
+
+                withContext(Dispatchers.Main) {
+                    val c = controller
+                    when {
+                        c != null && c.mediaItemCount > 0 -> {
+                            // Controller ready and Phase 1 item is playing — stitch in the rest.
+                            // Use beforeItems.size + 1 (not c.currentMediaItemIndex) because
+                            // MediaController IPC is async and the index may not be updated yet.
+                            if (beforeItems.isNotEmpty()) c.addMediaItems(0, beforeItems)
+                            if (afterItems.isNotEmpty()) c.addMediaItems(beforeItems.size + 1, afterItems)
+                        }
+                        c == null -> {
+                            // Controller still connecting (happens when Phase 2 is instant for cached
+                            // items). Upgrade single pending item to full playlist so the controller
+                            // picks up the complete queue when it connects.
+                            pendingMediaItem = null
+                            pendingPlaylist = Pair(
+                                beforeItems + listOf(clickedMediaItem) + afterItems,
+                                beforeItems.size,
+                            )
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -240,8 +261,6 @@ class PlayerViewModel @Inject constructor(
     }
 
     // ── Playlist mode ─────────────────────────────────────────────────────────
-    // Phase 1: resolve clicked track (cache-first) → start immediately.
-    // Phase 2: resolve all other tracks in parallel (cache-first) → insert into queue.
 
     private fun fetchAndPlayPlaylist() {
         val playlistId = savedStateHandle.get<String>("playlistId") ?: return
@@ -269,7 +288,7 @@ class PlayerViewModel @Inject constructor(
                     _playerState.value = _playerState.value.copy(title = firstItem.name)
                 }
 
-                // Phase 1: cache-first resolve of the clicked track → start immediately
+                // Phase 1: cache-first resolve of clicked track → start immediately
                 val firstMediaItem = resolvePlaylistItem(firstItem)
                 if (firstMediaItem == null) {
                     withContext(Dispatchers.Main) {
@@ -285,23 +304,34 @@ class PlayerViewModel @Inject constructor(
                     if (c == null) pendingMediaItem = firstMediaItem else playMediaItem(firstMediaItem)
                 }
 
+                if (cloudItems.size == 1) return@launch
+
                 // Phase 2: resolve remaining tracks in parallel (cached = no network)
-                if (cloudItems.size > 1) {
-                    var beforeItems: List<MediaItem> = emptyList()
-                    var afterItems: List<MediaItem> = emptyList()
-                    coroutineScope {
-                        val bd = cloudItems.subList(0, actualStart)
-                            .map { item -> async { resolvePlaylistItem(item) } }
-                        val ad = cloudItems.subList(actualStart + 1, cloudItems.size)
-                            .map { item -> async { resolvePlaylistItem(item) } }
-                        beforeItems = bd.awaitAll().filterNotNull()
-                        afterItems = ad.awaitAll().filterNotNull()
-                    }
-                    withContext(Dispatchers.Main) {
-                        val c = controller ?: return@withContext
-                        if (c.mediaItemCount == 0) return@withContext
-                        if (beforeItems.isNotEmpty()) c.addMediaItems(0, beforeItems)
-                        if (afterItems.isNotEmpty()) c.addMediaItems(c.currentMediaItemIndex + 1, afterItems)
+                var beforeItems: List<MediaItem> = emptyList()
+                var afterItems: List<MediaItem> = emptyList()
+                coroutineScope {
+                    val bd = cloudItems.subList(0, actualStart)
+                        .map { item -> async { resolvePlaylistItem(item) } }
+                    val ad = cloudItems.subList(actualStart + 1, cloudItems.size)
+                        .map { item -> async { resolvePlaylistItem(item) } }
+                    beforeItems = bd.awaitAll().filterNotNull()
+                    afterItems = ad.awaitAll().filterNotNull()
+                }
+
+                withContext(Dispatchers.Main) {
+                    val c = controller
+                    when {
+                        c != null && c.mediaItemCount > 0 -> {
+                            if (beforeItems.isNotEmpty()) c.addMediaItems(0, beforeItems)
+                            if (afterItems.isNotEmpty()) c.addMediaItems(beforeItems.size + 1, afterItems)
+                        }
+                        c == null -> {
+                            pendingMediaItem = null
+                            pendingPlaylist = Pair(
+                                beforeItems + listOf(firstMediaItem) + afterItems,
+                                beforeItems.size,
+                            )
+                        }
                     }
                 }
             } catch (e: Exception) {
