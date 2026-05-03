@@ -12,7 +12,6 @@ import com.example.cloudstreamapp.ui.home.HomeScreen
 import com.example.cloudstreamapp.ui.player.PlayerScreen
 import com.example.cloudstreamapp.ui.playlist.PlaylistDetailScreen
 import com.example.cloudstreamapp.ui.playlist.PlaylistsScreen
-import com.example.cloudstreamapp.ui.search.SearchScreen
 import com.example.cloudstreamapp.ui.settings.SettingsScreen
 
 @Composable
@@ -115,22 +114,6 @@ fun NavGraph(
             ),
         ) {
             PlayerScreen(onBack = { navController.popBackStack() })
-        }
-
-        composable(Screen.Search.route) {
-            SearchScreen(
-                onPlayMedia = { item ->
-                    navController.navigate(
-                        Screen.Player.createRoute(
-                            cloudType = item.path.cloudType.name,
-                            sourceUrl = item.path.sourceId,
-                            itemPath = item.path.relativePath,
-                            itemName = item.name,
-                            mediaId = item.id,
-                        )
-                    ) { launchSingleTop = true }
-                }
-            )
         }
 
         composable(Screen.Settings.route) {
