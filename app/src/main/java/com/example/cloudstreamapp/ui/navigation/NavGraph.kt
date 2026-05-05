@@ -83,6 +83,10 @@ fun NavGraph(
             PlayerScreen(onBack = { navController.popBackStack() })
         }
 
+        composable(Screen.NowPlaying.route) {
+            PlayerScreen(onBack = { navController.popBackStack() })
+        }
+
         composable(Screen.Playlists.route) {
             PlaylistsScreen(
                 onPlaylistClick = { id ->
@@ -101,7 +105,7 @@ fun NavGraph(
                 onPlayTrack = { startIndex ->
                     navController.navigate(
                         Screen.PlaylistPlayer.createRoute(playlistId, startIndex)
-                    )
+                    ) { launchSingleTop = true }
                 },
             )
         }

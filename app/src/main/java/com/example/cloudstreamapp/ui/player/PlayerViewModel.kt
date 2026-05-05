@@ -232,14 +232,16 @@ class PlayerViewModel @Inject constructor(
                 withContext(Dispatchers.Main) {
                     val c = controller
                     when {
-                        c != null && c.mediaItemCount > 0 -> {
+                        c != null -> {
                             // Controller ready and Phase 1 item is playing — stitch in the rest.
                             // Use beforeItems.size + 1 (not c.currentMediaItemIndex) because
                             // MediaController IPC is async and the index may not be updated yet.
+                            // Don't gate on c.mediaItemCount > 0: local state may lag behind
+                            // the setMediaItem command sent in Phase 1.
                             if (beforeItems.isNotEmpty()) c.addMediaItems(0, beforeItems)
                             if (afterItems.isNotEmpty()) c.addMediaItems(beforeItems.size + 1, afterItems)
                         }
-                        c == null -> {
+                        else -> {
                             // Controller still connecting (happens when Phase 2 is instant for cached
                             // items). Upgrade single pending item to full playlist so the controller
                             // picks up the complete queue when it connects.
@@ -281,8 +283,15 @@ class PlayerViewModel @Inject constructor(
                     return@launch
                 }
 
-                val actualStart = startIndex.coerceIn(0, cloudItems.lastIndex)
-                val firstItem = cloudItems[actualStart]
+                // startIndex is the visual index from PlaylistDetailScreen, which counts
+                // ALL rows including null-cloudItem entries. Walk the full pairs list so
+                // the index matches what the user actually tapped.
+                val allItems = pairs.map { (_, cloudItem) -> cloudItem }
+                val firstItem = allItems.getOrNull(startIndex.coerceIn(0, allItems.lastIndex))
+                    ?: cloudItems.first()
+
+                // Position of firstItem inside the non-null cloudItems list for queue building.
+                val queueStart = cloudItems.indexOf(firstItem).coerceAtLeast(0)
 
                 withContext(Dispatchers.Main) {
                     _playerState.value = _playerState.value.copy(title = firstItem.name)
@@ -310,9 +319,9 @@ class PlayerViewModel @Inject constructor(
                 var beforeItems: List<MediaItem> = emptyList()
                 var afterItems: List<MediaItem> = emptyList()
                 coroutineScope {
-                    val bd = cloudItems.subList(0, actualStart)
+                    val bd = cloudItems.subList(0, queueStart)
                         .map { item -> async { resolvePlaylistItem(item) } }
-                    val ad = cloudItems.subList(actualStart + 1, cloudItems.size)
+                    val ad = cloudItems.subList(queueStart + 1, cloudItems.size)
                         .map { item -> async { resolvePlaylistItem(item) } }
                     beforeItems = bd.awaitAll().filterNotNull()
                     afterItems = ad.awaitAll().filterNotNull()
@@ -321,11 +330,19 @@ class PlayerViewModel @Inject constructor(
                 withContext(Dispatchers.Main) {
                     val c = controller
                     when {
-                        c != null && c.mediaItemCount > 0 -> {
+                        c != null -> {
+                            // Controller ready and Phase 1 item is playing — stitch in the rest.
+                            // Use beforeItems.size + 1 (not c.currentMediaItemIndex) because
+                            // MediaController IPC is async and the index may not be updated yet.
+                            // Don't gate on c.mediaItemCount > 0: local state may lag behind
+                            // the setMediaItem command sent in Phase 1.
                             if (beforeItems.isNotEmpty()) c.addMediaItems(0, beforeItems)
                             if (afterItems.isNotEmpty()) c.addMediaItems(beforeItems.size + 1, afterItems)
                         }
-                        c == null -> {
+                        else -> {
+                            // Controller still connecting (happens when Phase 2 is instant for cached
+                            // items). Upgrade single pending item to full playlist so the controller
+                            // picks up the complete queue when it connects.
                             pendingMediaItem = null
                             pendingPlaylist = Pair(
                                 beforeItems + listOf(firstMediaItem) + afterItems,
