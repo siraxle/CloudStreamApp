@@ -6,9 +6,12 @@ import android.media.AudioManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,10 +22,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Collections
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
@@ -47,17 +53,20 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import coil.compose.AsyncImage
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -66,18 +75,24 @@ import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.example.cloudstreamapp.core.utils.toFormattedDuration
+import com.example.cloudstreamapp.domain.model.CloudItem
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
 @Composable
 fun PlayerScreen(
     onBack: () -> Unit,
+    onOpenGallery: ((cloudType: String, sourceUrl: String, folderPath: String) -> Unit)? = null,
     viewModel: PlayerViewModel = hiltViewModel(),
 ) {
     val state by viewModel.playerState.collectAsState()
     val player by viewModel.player.collectAsState()
     val isLoading by viewModel.isLoadingPlaylist.collectAsState()
     val error by viewModel.error.collectAsState()
+    val folderInfo by viewModel.folderInfo.collectAsState()
+    val coverImages by viewModel.coverImages.collectAsState()
+    val embeddedArtUri by viewModel.embeddedArtUri.collectAsState()
+
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(error) {
@@ -103,12 +118,21 @@ fun PlayerScreen(
         AudioPlayerContent(
             state = state,
             isLoading = isLoading,
+            coverImages = coverImages,
+            embeddedArtUri = embeddedArtUri,
+            onResolveCoverUrl = viewModel::resolveCoverUrl,
             onBack = onBack,
             onTogglePlayPause = viewModel::togglePlayPause,
             onSeekTo = viewModel::seekTo,
             onSkipNext = viewModel::skipToNext,
             onSkipPrevious = viewModel::skipToPrevious,
             snackbarHostState = snackbarHostState,
+            showGalleryButton = onOpenGallery != null && folderInfo?.hasImages == true,
+            onOpenGallery = {
+                folderInfo?.let { info ->
+                    onOpenGallery?.invoke(info.cloudType, info.sourceUrl, info.folderPath)
+                }
+            },
         )
     }
 }
@@ -118,12 +142,17 @@ fun PlayerScreen(
 private fun AudioPlayerContent(
     state: PlayerViewModel.PlayerState,
     isLoading: Boolean,
+    coverImages: List<CloudItem>,
+    embeddedArtUri: String?,
+    onResolveCoverUrl: suspend (CloudItem) -> String?,
     onBack: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onSeekTo: (Long) -> Unit,
     onSkipNext: () -> Unit,
     onSkipPrevious: () -> Unit,
     snackbarHostState: SnackbarHostState,
+    showGalleryButton: Boolean = false,
+    onOpenGallery: () -> Unit = {},
 ) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -135,24 +164,42 @@ private fun AudioPlayerContent(
                     }
                 },
                 title = { Text("Плеер") },
+                actions = {
+                    if (showGalleryButton) {
+                        IconButton(onClick = onOpenGallery) {
+                            Icon(Icons.Default.Collections, contentDescription = "Фото")
+                        }
+                    }
+                },
             )
         },
     ) { padding ->
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 32.dp),
         ) {
-            Spacer(modifier = Modifier.height(48.dp))
-
-            if (isLoading) {
-                CircularProgressIndicator()
-                Spacer(modifier = Modifier.height(16.dp))
+            // Cover area — swipeable pager of cloud images, or embedded art, or placeholder
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center,
+            ) {
+                CoverArea(
+                    coverImages = coverImages,
+                    embeddedArtUri = embeddedArtUri,
+                    onResolveCoverUrl = onResolveCoverUrl,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                if (isLoading) {
+                    CircularProgressIndicator()
+                }
             }
 
+            // Track info
             Text(
                 text = state.title ?: "Без названия",
                 style = MaterialTheme.typography.headlineSmall,
@@ -168,7 +215,7 @@ private fun AudioPlayerContent(
                 )
             }
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             if (state.durationMs > 0) {
                 val safeMax = state.durationMs.coerceAtLeast(1L).toFloat()
@@ -193,7 +240,7 @@ private fun AudioPlayerContent(
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
@@ -222,6 +269,100 @@ private fun AudioPlayerContent(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CoverArea(
+    coverImages: List<CloudItem>,
+    embeddedArtUri: String?,
+    onResolveCoverUrl: suspend (CloudItem) -> String?,
+    modifier: Modifier = Modifier,
+) {
+    when {
+        coverImages.isNotEmpty() -> {
+            // key resets pager to page 0 whenever the image set changes (different folder)
+            key(coverImages.first().id) {
+                val pagerState = rememberPagerState(pageCount = { coverImages.size })
+                Box(modifier = modifier) {
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize(),
+                    ) { page ->
+                        CoverImagePage(item = coverImages[page], onResolveCoverUrl = onResolveCoverUrl)
+                    }
+                    if (coverImages.size > 1) {
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            val dotCount = minOf(coverImages.size, 12)
+                            repeat(dotCount) { idx ->
+                                val isActive = idx == pagerState.currentPage
+                                Box(
+                                    modifier = Modifier
+                                        .size(if (isActive) 8.dp else 6.dp)
+                                        .background(
+                                            if (isActive) Color.White
+                                            else Color.White.copy(alpha = 0.45f),
+                                            CircleShape,
+                                        ),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        embeddedArtUri != null -> AsyncImage(
+            model = embeddedArtUri,
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = modifier,
+        )
+        else -> Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = Icons.Default.MusicNote,
+                contentDescription = null,
+                modifier = Modifier.size(96.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CoverImagePage(
+    item: CloudItem,
+    onResolveCoverUrl: suspend (CloudItem) -> String?,
+) {
+    var url by remember(item.id) { mutableStateOf<String?>(null) }
+    var loading by remember(item.id) { mutableStateOf(true) }
+    LaunchedEffect(item.id) {
+        url = onResolveCoverUrl(item)
+        loading = false
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            loading -> CircularProgressIndicator(color = Color.White)
+            url != null -> AsyncImage(
+                model = url,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }

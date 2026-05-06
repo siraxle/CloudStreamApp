@@ -12,6 +12,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
+import com.example.cloudstreamapp.core.utils.isImageFile
 import com.example.cloudstreamapp.core.utils.isMediaFile
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.CacheStatus
@@ -62,6 +63,23 @@ class PlayerViewModel @Inject constructor(
 
     private val _player = MutableStateFlow<Player?>(null)
     val player: StateFlow<Player?> = _player.asStateFlow()
+
+    private val _folderInfo = MutableStateFlow<FolderInfo?>(null)
+    val folderInfo: StateFlow<FolderInfo?> = _folderInfo.asStateFlow()
+
+    // All image files found in the current folder — URLs resolved on-demand in the UI
+    private val _coverImages = MutableStateFlow<List<CloudItem>>(emptyList())
+    val coverImages: StateFlow<List<CloudItem>> = _coverImages.asStateFlow()
+
+    // Embedded art URI set by PlaybackService (file:// path written after track headers are parsed)
+    private val _embeddedArtUri = MutableStateFlow<String?>(null)
+    val embeddedArtUri: StateFlow<String?> = _embeddedArtUri.asStateFlow()
+
+    // Folder key of last scanned folder — prevents redundant network scans for same-folder tracks
+    @Volatile private var lastScannedFolderKey: String? = null
+
+    // Populated in playlist mode: mediaId → CloudItem for per-track folder scanning on transition
+    private val mediaIdToCloudItem = HashMap<String, CloudItem>()
 
     init {
         connectToService()
@@ -149,6 +167,7 @@ class PlayerViewModel @Inject constructor(
                     } else {
                         _error.value = "Нет соединения, файл не скачан для офлайн-воспроизведения"
                     }
+                    triggerCoverScan(item.path)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -180,6 +199,27 @@ class PlayerViewModel @Inject constructor(
                 val path = CloudPath(sourceId = sourceUrl, relativePath = folderPath, cloudType = cloudType)
 
                 val allItems = listFolder(path).first()
+
+                // Detect images for gallery button (root check is instant — no extra API call)
+                val imageFilesInRoot = allItems.filter { it.type == CloudItem.ItemType.FILE && it.name.isImageFile() }
+                withContext(Dispatchers.Main) {
+                    _folderInfo.value = FolderInfo(cloudTypeStr, sourceUrl, folderPath, imageFilesInRoot.isNotEmpty())
+                }
+                val folderKey = "$cloudType:$sourceUrl:$folderPath"
+                lastScannedFolderKey = folderKey
+                // Scan root + all subfolders for images; store items, resolve URLs on-demand in UI
+                launch {
+                    val images = collectCoverImages(allItems)
+                    withContext(Dispatchers.Main) {
+                        if (lastScannedFolderKey == folderKey) {
+                            _coverImages.value = images
+                            if (images.isNotEmpty() && !imageFilesInRoot.any { it.id in images.map { img -> img.id } }) {
+                                _folderInfo.value = _folderInfo.value?.copy(hasImages = true)
+                            }
+                        }
+                    }
+                }
+
                 val mediaFiles = allItems
                     .filter { it.type == CloudItem.ItemType.FILE && it.name.isMediaFile() }
                     .sortedBy { it.name.lowercase() }
@@ -293,8 +333,13 @@ class PlayerViewModel @Inject constructor(
                 // Position of firstItem inside the non-null cloudItems list for queue building.
                 val queueStart = cloudItems.indexOf(firstItem).coerceAtLeast(0)
 
+                // Build mediaId → CloudItem map so onMediaItemTransition can scan per-track folder
+                val idToItem = cloudItems.associateBy { it.id }
                 withContext(Dispatchers.Main) {
+                    mediaIdToCloudItem.clear()
+                    mediaIdToCloudItem.putAll(idToItem)
                     _playerState.value = _playerState.value.copy(title = firstItem.name)
+                    triggerCoverScan(firstItem.path)
                 }
 
                 // Phase 1: cache-first resolve of clicked track → start immediately
@@ -408,6 +453,13 @@ class PlayerViewModel @Inject constructor(
         override fun onIsPlayingChanged(isPlaying: Boolean) = updateState()
         override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) = updateState()
         override fun onPlaybackStateChanged(playbackState: Int) = updateState()
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            _embeddedArtUri.value = null
+            updateState()
+            // In playlist mode, re-scan images if the new track's folder differs from the current one
+            val itemPath = mediaIdToCloudItem[mediaItem?.mediaId]?.path ?: return
+            triggerCoverScan(itemPath)
+        }
         override fun onPositionDiscontinuity(
             oldPosition: Player.PositionInfo,
             newPosition: Player.PositionInfo,
@@ -428,6 +480,8 @@ class PlayerViewModel @Inject constructor(
             positionMs = c.currentPosition.coerceAtLeast(0),
             hasMedia = c.mediaItemCount > 0,
         )
+        // Sync embedded art URI from PlaybackService (file:// path written when ExoPlayer parses track headers)
+        _embeddedArtUri.value = c.mediaMetadata.artworkUri?.toString()
     }
 
     private fun startProgressUpdater() {
@@ -468,6 +522,66 @@ class PlayerViewModel @Inject constructor(
     fun skipToPrevious() { controller?.seekToPreviousMediaItem() }
     fun dismissError() { _error.value = null }
 
+    /** Resolves a fresh URL for a cloud image item — called from the UI per visible page. */
+    suspend fun resolveCoverUrl(item: CloudItem): String? =
+        item.thumbnailUrl ?: runCatching {
+            withContext(Dispatchers.IO) { getStreamUrl(item) }
+        }.getOrNull()
+
+    /**
+     * Starts a cover scan for the folder containing [itemPath].
+     * Must be called from the main thread. No-op if the same folder was already scanned.
+     */
+    private fun triggerCoverScan(itemPath: CloudPath) {
+        val folderRelPath = itemPath.relativePath
+            .substringBeforeLast('/').takeIf { it.isNotEmpty() } ?: "/"
+        val folderKey = "${itemPath.cloudType}:${itemPath.sourceId}:$folderRelPath"
+        if (folderKey == lastScannedFolderKey) return
+        lastScannedFolderKey = folderKey
+        viewModelScope.launch(Dispatchers.IO) {
+            val folderPath = CloudPath(
+                sourceId = itemPath.sourceId,
+                relativePath = folderRelPath,
+                cloudType = itemPath.cloudType,
+            )
+            val images = collectCoverImagesFromPath(folderPath)
+            withContext(Dispatchers.Main) {
+                if (lastScannedFolderKey == folderKey) {
+                    _coverImages.value = images
+                    // Set folderInfo so the gallery button becomes visible in playlist/single-file mode.
+                    // In folder mode _folderInfo is already set by fetchAndPlayFolder(), don't overwrite.
+                    if (_folderInfo.value == null && images.isNotEmpty()) {
+                        _folderInfo.value = FolderInfo(
+                            cloudType = itemPath.cloudType.name,
+                            sourceUrl = itemPath.sourceId,
+                            folderPath = folderRelPath,
+                            hasImages = true,
+                        )
+                    } else if (_folderInfo.value != null && images.isNotEmpty()) {
+                        _folderInfo.value = _folderInfo.value!!.copy(hasImages = true)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Fetches a folder listing and collects all image files from it and its subfolders. */
+    private suspend fun collectCoverImagesFromPath(folderPath: CloudPath): List<CloudItem> {
+        val items = runCatching { listFolder(folderPath).first() }.getOrDefault(emptyList())
+        return collectCoverImages(items)
+    }
+
+    /** Collects all image files from [rootItems] and one level of subfolders. */
+    private suspend fun collectCoverImages(rootItems: List<CloudItem>): List<CloudItem> {
+        val images = mutableListOf<CloudItem>()
+        images += rootItems.filter { it.type == CloudItem.ItemType.FILE && it.name.isImageFile() }
+        for (dir in rootItems.filter { it.type == CloudItem.ItemType.DIRECTORY }) {
+            val subItems = runCatching { listFolder(dir.path).first() }.getOrDefault(emptyList())
+            images += subItems.filter { it.type == CloudItem.ItemType.FILE && it.name.isImageFile() }
+        }
+        return images
+    }
+
     override fun onCleared() {
         _player.value = null
         controller?.removeListener(playerListener)
@@ -484,5 +598,12 @@ class PlayerViewModel @Inject constructor(
         val positionMs: Long = 0L,
         val hasMedia: Boolean = false,
         val hasVideo: Boolean = false,
+    )
+
+    data class FolderInfo(
+        val cloudType: String,
+        val sourceUrl: String,
+        val folderPath: String,
+        val hasImages: Boolean,
     )
 }

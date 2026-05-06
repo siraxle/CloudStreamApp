@@ -1,8 +1,10 @@
 package com.example.cloudstreamapp.service
 
+import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.SimpleCache
@@ -12,7 +14,14 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import java.io.File
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -22,6 +31,8 @@ class PlaybackService : MediaSessionService() {
     @Inject lateinit var simpleCache: SimpleCache
 
     private var mediaSession: MediaSession? = null
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val artworkDir by lazy { File(cacheDir, "artwork").also { it.mkdirs() } }
 
     override fun onCreate() {
         super.onCreate()
@@ -53,6 +64,45 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
 
+        player.addListener(object : Player.Listener {
+            override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+                val artworkData = mediaMetadata.artworkData ?: return
+                val currentItem = player.currentMediaItem ?: return
+                if (currentItem.mediaMetadata.artworkUri != null) return
+                val idx = player.currentMediaItemIndex
+                if (idx < 0) return
+
+                val safeId = currentItem.mediaId
+                    .replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                    .take(64)
+                    .ifEmpty { "track_$idx" }
+
+                serviceScope.launch {
+                    try {
+                        val artFile = File(artworkDir, "$safeId.jpg")
+                        if (!artFile.exists()) artFile.writeBytes(artworkData)
+                        val artUri = Uri.fromFile(artFile)
+                        withContext(Dispatchers.Main) {
+                            val curIdx = player.currentMediaItemIndex
+                            if (curIdx < 0 || curIdx >= player.mediaItemCount) return@withContext
+                            val cur = player.getMediaItemAt(curIdx)
+                            if (cur.mediaMetadata.artworkUri != null) return@withContext
+                            player.replaceMediaItem(
+                                curIdx,
+                                cur.buildUpon()
+                                    .setMediaMetadata(
+                                        cur.mediaMetadata.buildUpon()
+                                            .setArtworkUri(artUri)
+                                            .build()
+                                    )
+                                    .build()
+                            )
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        })
+
         mediaSession = MediaSession.Builder(this, player).build()
     }
 
@@ -60,6 +110,7 @@ class PlaybackService : MediaSessionService() {
         mediaSession
 
     override fun onDestroy() {
+        serviceScope.cancel()
         mediaSession?.run {
             player.release()
             release()

@@ -8,6 +8,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.example.cloudstreamapp.ui.browser.BrowserScreen
+import com.example.cloudstreamapp.ui.gallery.ImageGalleryScreen
 import com.example.cloudstreamapp.ui.home.HomeScreen
 import com.example.cloudstreamapp.ui.player.PlayerScreen
 import com.example.cloudstreamapp.ui.playlist.PlaylistDetailScreen
@@ -68,7 +69,12 @@ fun NavGraph(
                 navArgument("encodedMediaId") { type = NavType.StringType },
             ),
         ) {
-            PlayerScreen(onBack = { navController.popBackStack() })
+            PlayerScreen(
+                onBack = { navController.popBackStack() },
+                onOpenGallery = { cloudType, sourceUrl, folderPath ->
+                    navController.navigate(Screen.ImageGallery.createRoute(cloudType, sourceUrl, folderPath))
+                },
+            )
         }
 
         composable(
@@ -80,11 +86,32 @@ fun NavGraph(
                 navArgument("encodedMediaId") { type = NavType.StringType },
             ),
         ) {
-            PlayerScreen(onBack = { navController.popBackStack() })
+            PlayerScreen(
+                onBack = { navController.popBackStack() },
+                onOpenGallery = { cloudType, sourceUrl, folderPath ->
+                    navController.navigate(Screen.ImageGallery.createRoute(cloudType, sourceUrl, folderPath))
+                },
+            )
+        }
+
+        composable(
+            route = Screen.ImageGallery.route,
+            arguments = listOf(
+                navArgument("cloudType") { type = NavType.StringType },
+                navArgument("encodedSourceUrl") { type = NavType.StringType },
+                navArgument("encodedFolderPath") { type = NavType.StringType },
+            ),
+        ) {
+            ImageGalleryScreen(onBack = { navController.popBackStack() })
         }
 
         composable(Screen.NowPlaying.route) {
-            PlayerScreen(onBack = { navController.popBackStack() })
+            PlayerScreen(
+                onBack = { navController.popBackStack() },
+                onOpenGallery = { cloudType, sourceUrl, folderPath ->
+                    navController.navigate(Screen.ImageGallery.createRoute(cloudType, sourceUrl, folderPath))
+                },
+            )
         }
 
         composable(Screen.Playlists.route) {
@@ -117,7 +144,12 @@ fun NavGraph(
                 navArgument("startIndex") { type = NavType.IntType },
             ),
         ) {
-            PlayerScreen(onBack = { navController.popBackStack() })
+            PlayerScreen(
+                onBack = { navController.popBackStack() },
+                onOpenGallery = { cloudType, sourceUrl, folderPath ->
+                    navController.navigate(Screen.ImageGallery.createRoute(cloudType, sourceUrl, folderPath))
+                },
+            )
         }
 
         composable(Screen.Settings.route) {

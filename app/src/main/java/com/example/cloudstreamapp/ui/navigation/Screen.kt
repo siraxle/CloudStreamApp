@@ -40,4 +40,8 @@ sealed class Screen(val route: String) {
         fun createRoute(playlistId: String) = "playlist/$playlistId"
     }
     object Settings : Screen("settings")
+    object ImageGallery : Screen("gallery/{cloudType}/{encodedSourceUrl}/{encodedFolderPath}") {
+        fun createRoute(cloudType: String, sourceUrl: String, folderPath: String): String =
+            "gallery/$cloudType/${Uri.encode(sourceUrl)}/${Uri.encode(folderPath)}"
+    }
 }
