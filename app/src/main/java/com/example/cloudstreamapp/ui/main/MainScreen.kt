@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Settings
@@ -40,7 +39,6 @@ fun MainScreen() {
     val navController = rememberNavController()
 
     val navItems = listOf(
-        NavItem(Screen.Home.route, "Главная", Icons.Default.Home),
         NavItem(Screen.Home.route, "Браузер", Icons.Default.Folder),
         NavItem(Screen.Playlists.route, "Плейлисты", Icons.Default.QueueMusic),
         NavItem(PLAYER_NAV_ROUTE, "Плеер", Icons.Default.PlayArrow),

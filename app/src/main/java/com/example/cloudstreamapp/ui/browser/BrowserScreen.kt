@@ -234,6 +234,7 @@ fun BrowserScreen(
     playlistTarget?.let { target ->
         AddToPlaylistDialog(
             targetName = target.displayName,
+            suggestedName = if (target is PlaylistTarget.Folder) target.item.name else null,
             playlists = playlists,
             onDismiss = { playlistTarget = null },
             onSelectPlaylist = { playlistId ->
@@ -418,9 +419,10 @@ private fun AddToPlaylistDialog(
     onDismiss: () -> Unit,
     onSelectPlaylist: (String) -> Unit,
     onCreateNew: (String) -> Unit,
+    suggestedName: String? = null,
 ) {
     var showNewField by rememberSaveable { mutableStateOf(false) }
-    var newName by rememberSaveable { mutableStateOf("") }
+    var newName by rememberSaveable { mutableStateOf(suggestedName.orEmpty()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
