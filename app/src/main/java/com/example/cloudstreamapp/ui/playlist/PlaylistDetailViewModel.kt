@@ -59,6 +59,10 @@ class PlaylistDetailViewModel @Inject constructor(
     private val _itemStates = MutableStateFlow<Map<String, ItemDownloadState>>(emptyMap())
     val itemDownloadStates: StateFlow<Map<String, ItemDownloadState>> = _itemStates.asStateFlow()
 
+    // Non-null while waiting for the user to confirm a track removal
+    private val _pendingRemoveItemId = MutableStateFlow<String?>(null)
+    val pendingRemoveItemId: StateFlow<String?> = _pendingRemoveItemId.asStateFlow()
+
     val tracks: StateFlow<List<TrackRow>> = repo.getItemsWithMetadata(playlistId)
         .map { pairs -> pairs.map { (item, cloudItem) -> TrackRow(item, cloudItem) } }
         .catch { emit(emptyList()) }
@@ -153,8 +157,20 @@ class PlaylistDetailViewModel @Inject constructor(
         if (totalLength > 0) totalLength else bytesRead
     }
 
-    fun removeTrack(itemId: String) {
-        viewModelScope.launch { repo.removeItem(itemId) }
+    /** Shows a confirmation dialog before removing the track. */
+    fun requestRemoveTrack(itemId: String) {
+        _pendingRemoveItemId.value = itemId
+    }
+
+    /** User confirmed — remove track and clean its cached file if no other playlist uses it. */
+    fun confirmRemoveTrack() {
+        val itemId = _pendingRemoveItemId.value ?: return
+        _pendingRemoveItemId.value = null
+        viewModelScope.launch { repo.removeItemAndCleanCache(itemId) }
+    }
+
+    fun cancelRemoveTrack() {
+        _pendingRemoveItemId.value = null
     }
 
     companion object {

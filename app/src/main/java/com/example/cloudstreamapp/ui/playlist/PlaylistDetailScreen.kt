@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.DownloadForOffline
 import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.VideoFile
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -27,6 +28,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -50,6 +52,7 @@ fun PlaylistDetailScreen(
     val tracks by viewModel.tracks.collectAsState()
     val name by viewModel.playlistName.collectAsState()
     val downloadStates by viewModel.itemDownloadStates.collectAsState()
+    val pendingRemoveItemId by viewModel.pendingRemoveItemId.collectAsState()
 
     val activeDownloads = downloadStates.values.count { it is PlaylistDetailViewModel.ItemDownloadState.InProgress }
 
@@ -205,7 +208,7 @@ fun PlaylistDetailScreen(
                                         )
                                         else -> Unit
                                     }
-                                    IconButton(onClick = { viewModel.removeTrack(row.item.id) }) {
+                                    IconButton(onClick = { viewModel.requestRemoveTrack(row.item.id) }) {
                                         Icon(Icons.Default.Delete, contentDescription = "Удалить из плейлиста")
                                     }
                                 }
@@ -218,5 +221,31 @@ fun PlaylistDetailScreen(
                 }
             }
         }
+    }
+
+    // Confirmation dialog for track removal
+    if (pendingRemoveItemId != null) {
+        val trackName = tracks
+            .firstOrNull { it.item.id == pendingRemoveItemId }
+            ?.cloudItem?.name ?: "трек"
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelRemoveTrack() },
+            title = { Text("Удалить из плейлиста?") },
+            text = {
+                Text(
+                    "«$trackName» будет удалён из плейлиста. " +
+                        "Если этот трек не используется в других плейлистах, " +
+                        "он также будет удалён с устройства."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmRemoveTrack() }) {
+                    Text("Удалить", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.cancelRemoveTrack() }) { Text("Отмена") }
+            },
+        )
     }
 }

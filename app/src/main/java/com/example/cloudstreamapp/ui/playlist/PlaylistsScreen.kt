@@ -46,6 +46,7 @@ fun PlaylistsScreen(
     viewModel: PlaylistsViewModel = hiltViewModel(),
 ) {
     val playlists by viewModel.playlists.collectAsState()
+    val pendingDeleteId by viewModel.pendingDeleteId.collectAsState()
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
@@ -72,12 +73,36 @@ fun PlaylistsScreen(
                         PlaylistRow(
                             item = item,
                             onClick = { onPlaylistClick(item.playlist.id) },
-                            onDelete = { viewModel.deletePlaylist(item.playlist.id) },
+                            onDelete = { viewModel.requestDeletePlaylist(item.playlist.id) },
                         )
                     }
                 }
             }
         }
+    }
+
+    // Confirmation dialog shown when user taps delete on a playlist
+    if (pendingDeleteId != null) {
+        val name = playlists.firstOrNull { it.playlist.id == pendingDeleteId }?.playlist?.name ?: ""
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelDeletePlaylist() },
+            title = { Text("Удалить плейлист?") },
+            text = {
+                Text(
+                    "«$name» будет удалён вместе со всеми треками. " +
+                        "Скачанные треки, не используемые в других плейлистах, " +
+                        "также будут удалены с устройства."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmDeletePlaylist() }) {
+                    Text("Удалить", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.cancelDeletePlaylist() }) { Text("Отмена") }
+            },
+        )
     }
 
     if (showCreateDialog) {

@@ -42,6 +42,9 @@ interface PlaylistDao {
     @Query("SELECT * FROM playlist_items WHERE playlistId = :playlistId ORDER BY position ASC")
     suspend fun getItemsOnce(playlistId: String): List<PlaylistItemEntity>
 
+    @Query("SELECT * FROM playlist_items WHERE id = :id LIMIT 1")
+    suspend fun getItemById(id: String): PlaylistItemEntity?
+
     // Count how many OTHER playlists reference this mediaId (used to decide cache eviction)
     @Query("SELECT COUNT(*) FROM playlist_items WHERE mediaId = :mediaId AND playlistId != :excludePlaylistId")
     suspend fun countOtherReferences(mediaId: String, excludePlaylistId: String): Int

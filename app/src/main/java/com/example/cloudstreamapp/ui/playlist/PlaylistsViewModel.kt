@@ -6,8 +6,10 @@ import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.Playlist
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -60,7 +62,21 @@ class PlaylistsViewModel @Inject constructor(
         }
     }
 
-    fun deletePlaylist(id: String) {
+    // Non-null while waiting for the user to confirm a playlist deletion
+    private val _pendingDeleteId = MutableStateFlow<String?>(null)
+    val pendingDeleteId: StateFlow<String?> = _pendingDeleteId.asStateFlow()
+
+    fun requestDeletePlaylist(id: String) {
+        _pendingDeleteId.value = id
+    }
+
+    fun confirmDeletePlaylist() {
+        val id = _pendingDeleteId.value ?: return
+        _pendingDeleteId.value = null
         viewModelScope.launch { repo.delete(id) }
+    }
+
+    fun cancelDeletePlaylist() {
+        _pendingDeleteId.value = null
     }
 }

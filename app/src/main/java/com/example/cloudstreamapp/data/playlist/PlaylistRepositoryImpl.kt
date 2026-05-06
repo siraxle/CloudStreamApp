@@ -1,6 +1,8 @@
 package com.example.cloudstreamapp.data.playlist
 
+import androidx.room.withTransaction
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
+import com.example.cloudstreamapp.core.database.AppDatabase
 import com.example.cloudstreamapp.core.database.dao.MediaMetadataDao
 import com.example.cloudstreamapp.core.database.dao.PlaylistDao
 import com.example.cloudstreamapp.core.database.entity.MediaMetadataEntity
@@ -18,12 +20,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class PlaylistRepositoryImpl @Inject constructor(
+    private val database: AppDatabase,
     private val playlistDao: PlaylistDao,
     private val metadataDao: MediaMetadataDao,
     private val cacheManager: MediaCacheManager,
@@ -48,19 +52,27 @@ class PlaylistRepositoryImpl @Inject constructor(
         playlistDao.update(playlist.toEntity())
 
     override suspend fun delete(id: String) {
-        // Snapshot items before cascade deletion removes them
-        val items = playlistDao.getItemsOnce(id)
+        val mediaIdsToClean = mutableListOf<String>()
 
-        // Cascade-delete playlist + all its playlist_items
-        playlistDao.deleteById(id)
-
-        // Clean up cache and metadata for tracks not referenced by any other playlist
-        for (item in items) {
-            val otherRefs = playlistDao.countOtherReferences(item.mediaId, id)
-            if (otherRefs == 0) {
-                cacheManager.removeCachedFile(item.mediaId)
-                metadataDao.deleteById(item.mediaId)
+        // Single transaction: snapshot → cascade delete → check refs → delete orphaned metadata
+        database.withTransaction {
+            val items = playlistDao.getItemsOnce(id)
+            playlistDao.deleteById(id)
+            for (item in items) {
+                val otherRefs = playlistDao.countOtherReferences(item.mediaId, id)
+                if (otherRefs == 0) {
+                    metadataDao.deleteById(item.mediaId)
+                    mediaIdsToClean.add(item.mediaId)
+                }
             }
+        }
+
+        // Remove from ExoPlayer cache outside the DB transaction (best-effort)
+        for (mediaId in mediaIdsToClean) {
+            cacheManager.removeCachedFile(mediaId)
+        }
+        if (mediaIdsToClean.isNotEmpty()) {
+            _metadataVersion.update { it + 1 }
         }
     }
 
@@ -69,6 +81,31 @@ class PlaylistRepositoryImpl @Inject constructor(
 
     override suspend fun removeItem(itemId: String) =
         playlistDao.deleteItem(itemId)
+
+    /**
+     * Removes a single track from its playlist and, if no other playlist references it,
+     * also deletes its cached media file and metadata from the DB.
+     */
+    suspend fun removeItemAndCleanCache(itemId: String) {
+        var mediaIdToClean: String? = null
+
+        database.withTransaction {
+            val item = playlistDao.getItemById(itemId)
+            if (item != null) {
+                playlistDao.deleteItem(itemId)
+                val otherRefs = playlistDao.countOtherReferences(item.mediaId, item.playlistId)
+                if (otherRefs == 0) {
+                    metadataDao.deleteById(item.mediaId)
+                    mediaIdToClean = item.mediaId
+                }
+            } else {
+                playlistDao.deleteItem(itemId)
+            }
+        }
+
+        mediaIdToClean?.let { cacheManager.removeCachedFile(it) }
+        _metadataVersion.update { it + 1 }
+    }
 
     override suspend fun moveItem(itemId: String, newPosition: Int) =
         playlistDao.updateItemPosition(itemId, newPosition)
@@ -82,7 +119,16 @@ class PlaylistRepositoryImpl @Inject constructor(
 
     suspend fun updateSizeBytes(mediaId: String, sizeBytes: Long) {
         metadataDao.updateSizeBytes(mediaId, sizeBytes)
-        _metadataVersion.value++
+        _metadataVersion.update { it + 1 }
+    }
+
+    /**
+     * Called after the entire media cache is cleared (e.g. from Settings).
+     * Bumps the version so all open flows re-compute CacheStatus, which will
+     * now return REMOTE because SimpleCache has no bytes for any key.
+     */
+    fun onCacheCleared() {
+        _metadataVersion.update { it + 1 }
     }
 
     suspend fun saveMediaAndAddToPlaylist(cloudItem: CloudItem, playlistId: String) {
