@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.Folder
@@ -393,6 +394,8 @@ private fun Breadcrumbs(
     }
 }
 
+private const val PLAYLIST_PAGE_SIZE = 5
+
 @Composable
 private fun AddToPlaylistDialog(
     targetName: String,
@@ -404,7 +407,11 @@ private fun AddToPlaylistDialog(
 ) {
     var showNewField by rememberSaveable { mutableStateOf(false) }
     var newName by rememberSaveable { mutableStateOf(suggestedName.orEmpty()) }
+    var currentPage by rememberSaveable { mutableStateOf(0) }
     val nameExists = playlists.any { it.name == newName.trim() }
+    val totalPages = if (playlists.isEmpty()) 0
+                     else (playlists.size + PLAYLIST_PAGE_SIZE - 1) / PLAYLIST_PAGE_SIZE
+    val pagePlaylists = playlists.drop(currentPage * PLAYLIST_PAGE_SIZE).take(PLAYLIST_PAGE_SIZE)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -418,11 +425,31 @@ private fun AddToPlaylistDialog(
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
                 if (playlists.isNotEmpty()) {
-                    playlists.forEach { playlist ->
+                    pagePlaylists.forEach { playlist ->
                         TextButton(
                             onClick = { onSelectPlaylist(playlist.id) },
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text(playlist.name) }
+                        ) { Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    }
+                    if (totalPages > 1) {
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            IconButton(
+                                onClick = { currentPage-- },
+                                enabled = currentPage > 0,
+                            ) { Icon(Icons.Default.ChevronLeft, contentDescription = "Назад") }
+                            Text(
+                                text = "${currentPage + 1} / $totalPages",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            IconButton(
+                                onClick = { currentPage++ },
+                                enabled = currentPage < totalPages - 1,
+                            ) { Icon(Icons.Default.ChevronRight, contentDescription = "Вперёд") }
+                        }
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                 }
