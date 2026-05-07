@@ -15,6 +15,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadForOffline
 import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.OfflinePin
@@ -200,12 +201,15 @@ fun PlaylistDetailScreen(
                                             modifier = Modifier.size(20.dp),
                                             tint = MaterialTheme.colorScheme.primary,
                                         )
-                                        cloudItem?.cacheStatus == CacheStatus.PARTIAL -> Icon(
-                                            imageVector = Icons.Default.Downloading,
-                                            contentDescription = "Частично загружен",
-                                            modifier = Modifier.size(20.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
+                                        cloudItem != null -> IconButton(
+                                            onClick = { viewModel.downloadSingleTrack(cloudItem) },
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Download,
+                                                contentDescription = "Скачать трек",
+                                                modifier = Modifier.size(20.dp),
+                                            )
+                                        }
                                         else -> Unit
                                     }
                                     IconButton(onClick = { viewModel.requestRemoveTrack(row.item.id) }) {

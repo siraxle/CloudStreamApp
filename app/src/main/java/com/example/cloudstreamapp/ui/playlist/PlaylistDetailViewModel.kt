@@ -73,11 +73,49 @@ class PlaylistDetailViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "Плейлист")
 
     private var downloadJob: Job? = null
+    private val singleDownloadJobs = mutableMapOf<String, Job>()
 
     fun triggerDownload() {
         downloadJob?.cancel()
+        singleDownloadJobs.values.forEach { it.cancel() }
+        singleDownloadJobs.clear()
         _itemStates.value = emptyMap()
         startDownloadAll()
+    }
+
+    fun downloadSingleTrack(cloudItem: CloudItem) {
+        singleDownloadJobs[cloudItem.id]?.cancel()
+        // Set InProgress synchronously before launching so Compose renders it in the very next frame,
+        // even if the IO work completes faster than a frame boundary.
+        _itemStates.update { it + (cloudItem.id to ItemDownloadState.InProgress(null)) }
+        val job = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val cacheLimit = settingsRepo.cacheLimitBytes.first()
+                if (cacheManager.simpleCache.cacheSpace >= cacheLimit) {
+                    _itemStates.update { map -> map - cloudItem.id }
+                    return@launch
+                }
+                val url = getStreamUrl(cloudItem) ?: run {
+                    _itemStates.update { map -> map - cloudItem.id }
+                    return@launch
+                }
+                val downloadedBytes = downloadWithProgress(cloudItem.id, url) { pct ->
+                    _itemStates.update { it + (cloudItem.id to ItemDownloadState.InProgress(pct)) }
+                }
+                if (cloudItem.sizeBytes == null && downloadedBytes > 0) {
+                    repo.updateSizeBytes(cloudItem.id, downloadedBytes)
+                }
+                _itemStates.update { it + (cloudItem.id to ItemDownloadState.Done) }
+            } catch (e: CancellationException) {
+                _itemStates.update { map -> map - cloudItem.id }
+                throw e
+            } catch (_: Exception) {
+                _itemStates.update { map -> map - cloudItem.id }
+            } finally {
+                singleDownloadJobs.remove(cloudItem.id)
+            }
+        }
+        singleDownloadJobs[cloudItem.id] = job
     }
 
     private fun startDownloadAll() {
