@@ -85,6 +85,14 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 },
             )
 
+            ListItem(
+                headlineContent = { Text("Очистить кэш изображений") },
+                supportingContent = { Text("Coil disk + memory cache") },
+                trailingContent = {
+                    Button(onClick = { viewModel.clearImageCache() }) { Text("Очистить") }
+                },
+            )
+
             SectionHeader("Воспроизведение")
 
             ListItem(

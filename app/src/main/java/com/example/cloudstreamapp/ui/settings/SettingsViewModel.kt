@@ -2,6 +2,7 @@ package com.example.cloudstreamapp.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.cloudstreamapp.core.cache.ImageCacheManager
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
@@ -16,6 +17,7 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val settings: SettingsRepositoryPort,
     private val cacheManager: MediaCacheManager,
+    private val imageCacheManager: ImageCacheManager,
     private val playlistRepo: PlaylistRepositoryImpl,
 ) : ViewModel() {
 
@@ -40,12 +42,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settings.setPlaybackSpeed(speed) }
     }
 
-    /**
-     * Wipes all cached media bytes from disk, leaving the cache object open and
-     * usable. Signals all open playlist flows to re-compute CacheStatus (→ REMOTE).
-     */
     fun clearCache() {
         cacheManager.clearAll()
         playlistRepo.onCacheCleared()
+    }
+
+    fun clearImageCache() {
+        imageCacheManager.clearAll()
     }
 }
