@@ -2,6 +2,7 @@ package com.example.cloudstreamapp.ui.player
 
 import android.content.ComponentName
 import android.content.Context
+import android.os.Bundle
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -123,7 +124,7 @@ class PlayerViewModel @Inject constructor(
     /** Resolve a playlist item: uses item.cacheStatus (set by getItemsWithMetadata). */
     private suspend fun resolvePlaylistItem(item: CloudItem): MediaItem? {
         if (item.cacheStatus == CacheStatus.CACHED) {
-            return buildOfflineMediaItem(item.id, item.name)
+            return buildOfflineMediaItem(item.id, item.name, item.path.toExtrasBundle())
         }
         val url = runCatching { getStreamUrl(item) }.getOrNull() ?: return null
         return buildOnlineMediaItem(item, url)
@@ -132,7 +133,7 @@ class PlayerViewModel @Inject constructor(
     /** Resolve a folder item: checks SimpleCache directly (cacheStatus not set by listFolder). */
     private suspend fun resolveFolderItem(item: CloudItem): MediaItem? {
         if (cacheManager.getCacheStatus(item.id, item.sizeBytes) == CacheStatus.CACHED) {
-            return buildOfflineMediaItem(item.id, item.name)
+            return buildOfflineMediaItem(item.id, item.name, item.path.toExtrasBundle())
         }
         val url = runCatching { getStreamUrl(item) }.getOrNull() ?: return null
         return buildOnlineMediaItem(item, url)
@@ -163,7 +164,7 @@ class PlayerViewModel @Inject constructor(
                     if (url != null) {
                         playMediaItem(buildOnlineMediaItem(item, url))
                     } else if (cacheManager.getCacheStatus(mediaId, null) == CacheStatus.CACHED) {
-                        playMediaItem(buildOfflineMediaItem(mediaId, itemName))
+                        playMediaItem(buildOfflineMediaItem(mediaId, itemName, item.path.toExtrasBundle()))
                     } else {
                         _error.value = "Нет соединения, файл не скачан для офлайн-воспроизведения"
                     }
@@ -412,16 +413,26 @@ class PlayerViewModel @Inject constructor(
             .setUri(url)
             .setMediaId(item.id)
             .setCustomCacheKey(item.id)
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(item.name).build())
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(item.name)
+                    .setExtras(item.path.toExtrasBundle())
+                    .build()
+            )
             .build()
 
     /** Placeholder URI — CacheDataSource serves data from SimpleCache by CustomCacheKey. */
-    private fun buildOfflineMediaItem(mediaId: String, title: String) =
+    private fun buildOfflineMediaItem(mediaId: String, title: String, pathBundle: Bundle? = null) =
         MediaItem.Builder()
             .setUri("https://offline.cache/$mediaId")
             .setMediaId(mediaId)
             .setCustomCacheKey(mediaId)
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(title)
+                    .apply { if (pathBundle != null) setExtras(pathBundle) }
+                    .build()
+            )
             .build()
 
     // ── Common player logic ───────────────────────────────────────────────────
@@ -480,8 +491,13 @@ class PlayerViewModel @Inject constructor(
             positionMs = c.currentPosition.coerceAtLeast(0),
             hasMedia = c.mediaItemCount > 0,
         )
-        // Sync embedded art URI from PlaybackService (file:// path written when ExoPlayer parses track headers)
         _embeddedArtUri.value = c.mediaMetadata.artworkUri?.toString()
+        // If no images loaded yet (e.g. NowPlaying or any fresh ViewModel), recover the folder
+        // path from the MediaItem extras — every item built by this VM carries it.
+        if (_coverImages.value.isEmpty()) {
+            c.currentMediaItem?.mediaMetadata?.extras?.toCloudPath()
+                ?.let { triggerCoverScan(it) }
+        }
     }
 
     private fun startProgressUpdater() {
@@ -580,6 +596,22 @@ class PlayerViewModel @Inject constructor(
             images += subItems.filter { it.type == CloudItem.ItemType.FILE && it.name.isImageFile() }
         }
         return images
+    }
+
+    // ── Bundle helpers ────────────────────────────────────────────────────────
+
+    private fun CloudPath.toExtrasBundle() = Bundle().apply {
+        putString("cloudSourceId", sourceId)
+        putString("cloudRelPath", relativePath)
+        putString("cloudType", cloudType.name)
+    }
+
+    private fun Bundle.toCloudPath(): CloudPath? {
+        val sourceId = getString("cloudSourceId") ?: return null
+        val relPath = getString("cloudRelPath") ?: return null
+        val cloudTypeStr = getString("cloudType") ?: return null
+        val cloudType = runCatching { CloudType.valueOf(cloudTypeStr) }.getOrNull() ?: return null
+        return CloudPath(sourceId = sourceId, relativePath = relPath, cloudType = cloudType)
     }
 
     override fun onCleared() {
