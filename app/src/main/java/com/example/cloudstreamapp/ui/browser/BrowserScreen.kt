@@ -404,6 +404,7 @@ private fun AddToPlaylistDialog(
 ) {
     var showNewField by rememberSaveable { mutableStateOf(false) }
     var newName by rememberSaveable { mutableStateOf(suggestedName.orEmpty()) }
+    val nameExists = playlists.any { it.name == newName.trim() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -431,6 +432,10 @@ private fun AddToPlaylistDialog(
                         onValueChange = { newName = it },
                         label = { Text("Название плейлиста") },
                         singleLine = true,
+                        isError = nameExists,
+                        supportingText = if (nameExists) {
+                            { Text("Плейлист с таким именем уже существует") }
+                        } else null,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
@@ -444,7 +449,8 @@ private fun AddToPlaylistDialog(
         confirmButton = {
             if (showNewField) {
                 TextButton(
-                    onClick = { if (newName.isNotBlank()) onCreateNew(newName.trim()) },
+                    enabled = newName.isNotBlank() && !nameExists,
+                    onClick = { onCreateNew(newName.trim()) },
                 ) { Text("Создать") }
             }
         },

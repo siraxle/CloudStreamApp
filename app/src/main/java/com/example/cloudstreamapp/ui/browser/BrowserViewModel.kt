@@ -127,16 +127,23 @@ class BrowserViewModel @Inject constructor(
 
     fun addToPlaylist(item: CloudItem, playlistId: String) {
         viewModelScope.launch {
-            playlistRepo.saveMediaAndAddToPlaylist(item, playlistId)
-            _playlistMessage.value = "«${item.name}» добавлен в плейлист"
+            val added = playlistRepo.saveMediaAndAddToPlaylist(item, playlistId)
+            _playlistMessage.value = if (added)
+                "«${item.name}» добавлен в плейлист"
+            else
+                "«${item.name}» уже есть в плейлисте"
         }
     }
 
     fun addFolderToPlaylist(folder: CloudItem, playlistId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val mediaFiles = collectMediaFiles(folder.path)
-            mediaFiles.forEach { playlistRepo.saveMediaAndAddToPlaylist(it, playlistId) }
-            _playlistMessage.value = "Добавлено ${mediaFiles.size} файлов из «${folder.name}»"
+            val addedCount = mediaFiles.count { playlistRepo.saveMediaAndAddToPlaylist(it, playlistId) }
+            _playlistMessage.value = when {
+                addedCount == 0 -> "Все файлы из «${folder.name}» уже в плейлисте"
+                addedCount < mediaFiles.size -> "Добавлено $addedCount из ${mediaFiles.size} файлов из «${folder.name}»"
+                else -> "Добавлено $addedCount файлов из «${folder.name}»"
+            }
         }
     }
 

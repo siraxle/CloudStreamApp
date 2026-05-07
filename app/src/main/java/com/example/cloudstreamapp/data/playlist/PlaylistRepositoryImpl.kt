@@ -131,13 +131,14 @@ class PlaylistRepositoryImpl @Inject constructor(
         _metadataVersion.update { it + 1 }
     }
 
-    suspend fun saveMediaAndAddToPlaylist(cloudItem: CloudItem, playlistId: String) {
+    suspend fun saveMediaAndAddToPlaylist(cloudItem: CloudItem, playlistId: String): Boolean {
         val mediaId = cloudItem.id
         val existing = metadataDao.get(cloudItem.path.sourceId, cloudItem.path.relativePath)
         if (existing == null) {
             metadataDao.insert(cloudItem.toMetadataEntity())
         }
         val currentItems = playlistDao.getItemsForPlaylist(playlistId).first()
+        if (currentItems.any { it.mediaId == mediaId }) return false
         val nextPosition = (currentItems.maxOfOrNull { it.position } ?: -1) + 1
         playlistDao.insertItem(
             PlaylistItemEntity(
@@ -148,10 +149,10 @@ class PlaylistRepositoryImpl @Inject constructor(
                 addedAt = System.currentTimeMillis(),
             )
         )
-        // Update playlist updatedAt
         playlistDao.getById(playlistId)?.let { playlist ->
             playlistDao.update(playlist.copy(updatedAt = System.currentTimeMillis()))
         }
+        return true
     }
 
     // Reacts to both playlist_items changes AND media_metadata updates (_metadataVersion)
