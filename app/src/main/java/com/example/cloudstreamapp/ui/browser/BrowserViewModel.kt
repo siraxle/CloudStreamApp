@@ -3,17 +3,12 @@ package com.example.cloudstreamapp.ui.browser
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.ExistingWorkPolicy
-import androidx.work.WorkManager
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.core.utils.isMediaFile
-import com.example.cloudstreamapp.core.worker.PlaylistCacheWorker
-import com.example.cloudstreamapp.core.worker.SingleFileCacheWorker
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.CloudPath
 import com.example.cloudstreamapp.domain.model.Playlist
-import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import com.example.cloudstreamapp.domain.port.SourceRepositoryPort
 import com.example.cloudstreamapp.domain.usecase.ListFolderUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -41,8 +36,6 @@ class BrowserViewModel @Inject constructor(
     private val listFolder: ListFolderUseCase,
     private val sourceRepo: SourceRepositoryPort,
     private val playlistRepo: PlaylistRepositoryImpl,
-    private val settingsRepo: SettingsRepositoryPort,
-    private val workManager: WorkManager,
     private val cacheManager: MediaCacheManager,
 ) : ViewModel() {
 
@@ -132,22 +125,9 @@ class BrowserViewModel @Inject constructor(
     private val _playlistMessage = MutableStateFlow<String?>(null)
     val playlistMessage: StateFlow<String?> = _playlistMessage.asStateFlow()
 
-    fun cacheFile(item: CloudItem) {
-        viewModelScope.launch {
-            playlistRepo.saveMediaMetadata(item)
-            workManager.enqueueUniqueWork(
-                SingleFileCacheWorker.workName(item.id),
-                ExistingWorkPolicy.KEEP,
-                SingleFileCacheWorker.buildRequest(item.id),
-            )
-            _playlistMessage.value = "«${item.name}» добавляется в кэш"
-        }
-    }
-
     fun addToPlaylist(item: CloudItem, playlistId: String) {
         viewModelScope.launch {
             playlistRepo.saveMediaAndAddToPlaylist(item, playlistId)
-            enqueueCache(playlistId)
             _playlistMessage.value = "«${item.name}» добавлен в плейлист"
         }
     }
@@ -156,7 +136,6 @@ class BrowserViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             val mediaFiles = collectMediaFiles(folder.path)
             mediaFiles.forEach { playlistRepo.saveMediaAndAddToPlaylist(it, playlistId) }
-            enqueueCache(playlistId)
             _playlistMessage.value = "Добавлено ${mediaFiles.size} файлов из «${folder.name}»"
         }
     }
@@ -182,7 +161,6 @@ class BrowserViewModel @Inject constructor(
             )
             playlistRepo.create(playlist)
             playlistRepo.saveMediaAndAddToPlaylist(item, playlist.id)
-            enqueueCache(playlist.id)
             _playlistMessage.value = "Плейлист «$name» создан"
         }
     }
@@ -198,17 +176,7 @@ class BrowserViewModel @Inject constructor(
             )
             playlistRepo.create(playlist)
             addFolderToPlaylist(folder, playlist.id)
-            // enqueueCache вызывается внутри addFolderToPlaylist
         }
-    }
-
-    private suspend fun enqueueCache(playlistId: String) {
-        val wifiOnly = settingsRepo.wifiOnlyPrefetch.first()
-        workManager.enqueueUniqueWork(
-            PlaylistCacheWorker.workName(playlistId),
-            ExistingWorkPolicy.REPLACE,
-            PlaylistCacheWorker.buildRequest(playlistId, wifiOnly),
-        )
     }
 
     fun dismissPlaylistMessage() { _playlistMessage.value = null }

@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.ViewList
-import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -200,7 +199,6 @@ fun BrowserScreen(
                                     PlaylistTarget.File(item)
                                 }
                             },
-                            onCacheFile = { viewModel.cacheFile(item) },
                         )
                     }
                 }
@@ -223,7 +221,6 @@ fun BrowserScreen(
                                     PlaylistTarget.File(item)
                                 }
                             },
-                            onCacheFile = { viewModel.cacheFile(item) },
                         )
                     }
                 }
@@ -260,7 +257,6 @@ private fun CloudItemCard(
     item: CloudItem,
     onClick: () -> Unit,
     onAddToPlaylist: () -> Unit,
-    onCacheFile: () -> Unit,
 ) {
     val isFile = item.type == CloudItem.ItemType.FILE
     val icon = when {
@@ -300,13 +296,6 @@ private fun CloudItemCard(
                             leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, contentDescription = null) },
                             onClick = { menuExpanded = false; onAddToPlaylist() },
                         )
-                        if (isFile && item.cacheStatus != CacheStatus.CACHED) {
-                            DropdownMenuItem(
-                                text = { Text("Кэшировать") },
-                                leadingIcon = { Icon(Icons.Default.SaveAlt, contentDescription = null) },
-                                onClick = { menuExpanded = false; onCacheFile() },
-                            )
-                        }
                     }
                 }
             }
@@ -326,7 +315,6 @@ private fun CloudItemRow(
     onClick: () -> Unit,
     onPlay: () -> Unit,
     onAddToPlaylist: () -> Unit,
-    onCacheFile: () -> Unit,
 ) {
     val isFile = item.type == CloudItem.ItemType.FILE
     val icon = when {
@@ -376,13 +364,6 @@ private fun CloudItemRow(
                             leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, contentDescription = null) },
                             onClick = { menuExpanded = false; onAddToPlaylist() },
                         )
-                        if (isFile && item.cacheStatus != CacheStatus.CACHED) {
-                            DropdownMenuItem(
-                                text = { Text("Кэшировать") },
-                                leadingIcon = { Icon(Icons.Default.SaveAlt, contentDescription = null) },
-                                onClick = { menuExpanded = false; onCacheFile() },
-                            )
-                        }
                     }
                 }
             }
