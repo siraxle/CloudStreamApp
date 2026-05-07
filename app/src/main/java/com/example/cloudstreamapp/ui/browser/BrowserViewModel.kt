@@ -154,14 +154,21 @@ class BrowserViewModel @Inject constructor(
 
     fun addFolderToPlaylist(folder: CloudItem, playlistId: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val allItems = listFolder(folder.path).first()
-            val mediaFiles = allItems.filter {
-                it.type == CloudItem.ItemType.FILE && it.name.isMediaFile()
-            }
+            val mediaFiles = collectMediaFiles(folder.path)
             mediaFiles.forEach { playlistRepo.saveMediaAndAddToPlaylist(it, playlistId) }
             enqueueCache(playlistId)
             _playlistMessage.value = "Добавлено ${mediaFiles.size} файлов из «${folder.name}»"
         }
+    }
+
+    private suspend fun collectMediaFiles(path: CloudPath, depth: Int = 0): List<CloudItem> {
+        if (depth > 10) return emptyList()
+        val items = listFolder(path).first()
+        val files = items.filter { it.type == CloudItem.ItemType.FILE && it.name.isMediaFile() }
+        val subFiles = items
+            .filter { it.type == CloudItem.ItemType.DIRECTORY }
+            .flatMap { collectMediaFiles(it.path, depth + 1) }
+        return files + subFiles
     }
 
     fun createPlaylistAndAdd(item: CloudItem, name: String) {
