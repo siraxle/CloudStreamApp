@@ -35,6 +35,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -142,6 +144,7 @@ class PlayerViewModel @Inject constructor(
     // ── Single-file mode ──────────────────────────────────────────────────────
 
     private fun fetchAndPlay() {
+        PlaybackService.currentPlaylistId = null
         val cloudTypeStr = savedStateHandle.get<String>("cloudType") ?: return
         val sourceUrl = savedStateHandle.get<String>("encodedSourceUrl") ?: return
         val itemPath = savedStateHandle.get<String>("encodedItemPath") ?: return
@@ -187,6 +190,7 @@ class PlayerViewModel @Inject constructor(
     // once the controller becomes available.
 
     private fun fetchAndPlayFolder() {
+        PlaybackService.currentPlaylistId = null
         val cloudTypeStr = savedStateHandle.get<String>("cloudType") ?: return
         val sourceUrl = savedStateHandle.get<String>("encodedSourceUrl") ?: return
         val folderPath = savedStateHandle.get<String>("encodedFolderPath") ?: return
@@ -333,6 +337,21 @@ class PlayerViewModel @Inject constructor(
 
                 // Position of firstItem inside the non-null cloudItems list for queue building.
                 val queueStart = cloudItems.indexOf(firstItem).coerceAtLeast(0)
+
+                // Register as the active playlist so PlaybackService can stop on deletion
+                PlaybackService.currentPlaylistId = playlistId
+
+                // If screen is open: observe deletion and surface an error in the UI
+                playlistRepo.deletedPlaylistFlow
+                    .onEach { deletedId ->
+                        if (deletedId == playlistId) {
+                            withContext(Dispatchers.Main) {
+                                _error.value = "Плейлист был удалён"
+                                _playerState.value = PlayerState()
+                            }
+                        }
+                    }
+                    .launchIn(viewModelScope)
 
                 // Build mediaId → CloudItem map so onMediaItemTransition can scan per-track folder
                 val idToItem = cloudItems.associateBy { it.id }

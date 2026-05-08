@@ -179,7 +179,7 @@ private fun AudioPlayerContent(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 32.dp),
+                .padding(horizontal = 16.dp),
         ) {
             // Cover area — swipeable pager of cloud images, or embedded art, or placeholder
             Box(
@@ -204,6 +204,9 @@ private fun AudioPlayerContent(
                 text = state.title ?: "Без названия",
                 style = MaterialTheme.typography.headlineSmall,
                 textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
             )
             state.artist?.let {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -212,6 +215,9 @@ private fun AudioPlayerContent(
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
 

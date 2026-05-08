@@ -36,6 +36,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 
@@ -123,7 +124,7 @@ private fun PlaylistRow(
     onDelete: () -> Unit,
 ) {
     ListItem(
-        headlineContent = { Text(item.playlist.name) },
+        headlineContent = { Text(item.playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,

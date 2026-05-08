@@ -13,6 +13,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,8 +30,14 @@ class PlaybackService : MediaSessionService() {
 
     @Inject lateinit var okHttpClient: OkHttpClient
     @Inject lateinit var simpleCache: SimpleCache
+    @Inject lateinit var playlistRepo: PlaylistRepositoryImpl
 
     private var mediaSession: MediaSession? = null
+
+    companion object {
+        /** Set by PlayerViewModel when a playlist is loaded; cleared when playback stops or switches. */
+        @Volatile var currentPlaylistId: String? = null
+    }
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val artworkDir by lazy { File(cacheDir, "artwork").also { it.mkdirs() } }
 
@@ -104,6 +111,18 @@ class PlaybackService : MediaSessionService() {
         })
 
         mediaSession = MediaSession.Builder(this, player).build()
+
+        serviceScope.launch {
+            playlistRepo.deletedPlaylistFlow.collect { deletedId ->
+                if (deletedId == currentPlaylistId) {
+                    currentPlaylistId = null
+                    withContext(Dispatchers.Main) {
+                        player.clearMediaItems()
+                        player.stop()
+                    }
+                }
+            }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =

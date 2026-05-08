@@ -20,9 +20,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
@@ -55,9 +58,16 @@ class PlaylistDetailViewModel @Inject constructor(
         object Done : ItemDownloadState()
     }
 
+    sealed class DownloadError {
+        object CacheLimitReached : DownloadError()
+    }
+
     // Per-file download state: mediaId -> state (live, resets on new session)
     private val _itemStates = MutableStateFlow<Map<String, ItemDownloadState>>(emptyMap())
     val itemDownloadStates: StateFlow<Map<String, ItemDownloadState>> = _itemStates.asStateFlow()
+
+    private val _downloadError = MutableSharedFlow<DownloadError>(extraBufferCapacity = 1)
+    val downloadError: SharedFlow<DownloadError> = _downloadError.asSharedFlow()
 
     // Non-null while waiting for the user to confirm a track removal
     private val _pendingRemoveItemId = MutableStateFlow<String?>(null)
@@ -93,6 +103,7 @@ class PlaylistDetailViewModel @Inject constructor(
                 val cacheLimit = settingsRepo.cacheLimitBytes.first()
                 if (cacheManager.simpleCache.cacheSpace >= cacheLimit) {
                     _itemStates.update { map -> map - cloudItem.id }
+                    _downloadError.tryEmit(DownloadError.CacheLimitReached)
                     return@launch
                 }
                 val url = getStreamUrl(cloudItem) ?: run {
@@ -131,7 +142,10 @@ class PlaylistDetailViewModel @Inject constructor(
 
             for (batch in toDownload.chunked(PARALLEL_DOWNLOADS)) {
                 if (!isActive) break
-                if (cacheManager.simpleCache.cacheSpace >= cacheLimit) break
+                if (cacheManager.simpleCache.cacheSpace >= cacheLimit) {
+                    _downloadError.tryEmit(DownloadError.CacheLimitReached)
+                    break
+                }
 
                 coroutineScope {
                     batch.forEach { cloudItem ->

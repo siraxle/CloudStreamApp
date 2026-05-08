@@ -28,12 +28,17 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,7 +62,21 @@ fun PlaylistDetailScreen(
 
     val activeDownloads = downloadStates.values.count { it is PlaylistDetailViewModel.ItemDownloadState.InProgress }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(viewModel) {
+        viewModel.downloadError.collect { error ->
+            when (error) {
+                PlaylistDetailViewModel.DownloadError.CacheLimitReached ->
+                    snackbarHostState.showSnackbar(
+                        message = "Кэш заполнен. Очистите место в Настройках или увеличьте лимит.",
+                        duration = SnackbarDuration.Long,
+                    )
+            }
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 navigationIcon = {
@@ -67,7 +86,12 @@ fun PlaylistDetailScreen(
                 },
                 title = {
                     Column {
-                        Text(name)
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                         if (activeDownloads > 0) {
                             Text(
                                 text = "Загрузка $activeDownloads файлов…",

@@ -16,7 +16,10 @@ import com.example.cloudstreamapp.domain.model.Playlist
 import com.example.cloudstreamapp.domain.model.PlaylistItem
 import com.example.cloudstreamapp.domain.port.PlaylistRepositoryPort
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -35,6 +38,10 @@ class PlaylistRepositoryImpl @Inject constructor(
 
     // Incremented whenever media_metadata is written so flows re-read fresh sizeBytes
     private val _metadataVersion = MutableStateFlow(0)
+
+    // Emits the id of a playlist the moment it is deleted — PlaybackService observes this to stop
+    private val _deletedPlaylistFlow = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val deletedPlaylistFlow: SharedFlow<String> = _deletedPlaylistFlow.asSharedFlow()
 
     override fun getAll(): Flow<List<Playlist>> =
         playlistDao.getAll().map { list -> list.map { it.toDomain() } }
@@ -66,6 +73,9 @@ class PlaylistRepositoryImpl @Inject constructor(
                 }
             }
         }
+
+        // Signal deletion before touching cache so the player can stop reading before we delete
+        _deletedPlaylistFlow.tryEmit(id)
 
         // Remove from ExoPlayer cache outside the DB transaction (best-effort)
         for (mediaId in mediaIdsToClean) {
