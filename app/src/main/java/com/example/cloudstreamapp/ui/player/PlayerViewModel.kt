@@ -32,13 +32,16 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import javax.inject.Inject
 
 @HiltViewModel
@@ -49,6 +52,7 @@ class PlayerViewModel @Inject constructor(
     private val listFolder: ListFolderUseCase,
     private val playlistRepo: PlaylistRepositoryImpl,
     private val cacheManager: MediaCacheManager,
+    private val settings: SettingsRepositoryPort,
 ) : ViewModel() {
 
     private var controller: MediaController? = null
@@ -66,6 +70,9 @@ class PlayerViewModel @Inject constructor(
 
     private val _player = MutableStateFlow<Player?>(null)
     val player: StateFlow<Player?> = _player.asStateFlow()
+
+    val playbackSpeed: StateFlow<Float> = settings.playbackSpeed
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 1.0f)
 
     private val _folderInfo = MutableStateFlow<FolderInfo?>(null)
     val folderInfo: StateFlow<FolderInfo?> = _folderInfo.asStateFlow()
@@ -556,6 +563,10 @@ class PlayerViewModel @Inject constructor(
     fun skipToNext() { controller?.seekToNextMediaItem() }
     fun skipToPrevious() { controller?.seekToPreviousMediaItem() }
     fun dismissError() { _error.value = null }
+
+    fun setPlaybackSpeed(speed: Float) {
+        viewModelScope.launch { settings.setPlaybackSpeed(speed) }
+    }
 
     /** Resolves a fresh URL for a cloud image item — called from the UI per visible page. */
     suspend fun resolveCoverUrl(item: CloudItem): String? =

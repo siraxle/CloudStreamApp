@@ -40,19 +40,12 @@ class SettingsViewModel @Inject constructor(
     val wifiOnlyPrefetch: StateFlow<Boolean> = settings.wifiOnlyPrefetch
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    val playbackSpeed: StateFlow<Float> = settings.playbackSpeed
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 1.0f)
-
     fun setCacheLimit(bytes: Long) {
         viewModelScope.launch { settings.setCacheLimitBytes(bytes) }
     }
 
     fun setWifiOnlyPrefetch(enabled: Boolean) {
         viewModelScope.launch { settings.setWifiOnlyPrefetch(enabled) }
-    }
-
-    fun setPlaybackSpeed(speed: Float) {
-        viewModelScope.launch { settings.setPlaybackSpeed(speed) }
     }
 
     fun clearCache() {

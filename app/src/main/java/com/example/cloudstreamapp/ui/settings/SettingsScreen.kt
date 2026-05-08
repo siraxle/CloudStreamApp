@@ -16,7 +16,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -39,8 +38,6 @@ private val CACHE_PRESETS = listOf(
     5L * 1024 * 1024 * 1024 to "5 GB",
 )
 
-private val SPEED_OPTIONS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
-
 private val WarningOrange = Color(0xFFF57C00)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,7 +46,6 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val cacheLimitBytes by viewModel.cacheLimitBytes.collectAsState()
     val usedCacheBytes by viewModel.usedCacheBytes.collectAsState()
     val wifiOnly by viewModel.wifiOnlyPrefetch.collectAsState()
-    val speed by viewModel.playbackSpeed.collectAsState()
 
     LaunchedEffect(Unit) {
         viewModel.refreshCacheUsage()
@@ -172,23 +168,6 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 },
             )
 
-            SectionHeader("Воспроизведение")
-
-            ListItem(
-                headlineContent = { Text("Скорость: ${speed}×") },
-                supportingContent = {
-                    Slider(
-                        value = SPEED_OPTIONS.indexOf(speed).toFloat().coerceAtLeast(0f),
-                        onValueChange = { idx ->
-                            val i = idx.toInt().coerceIn(SPEED_OPTIONS.indices)
-                            viewModel.setPlaybackSpeed(SPEED_OPTIONS[i])
-                        },
-                        valueRange = 0f..(SPEED_OPTIONS.size - 1).toFloat(),
-                        steps = SPEED_OPTIONS.size - 2,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                },
-            )
         }
     }
 }

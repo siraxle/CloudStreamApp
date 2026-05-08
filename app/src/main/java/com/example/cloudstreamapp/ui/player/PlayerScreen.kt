@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.pager.HorizontalPager
@@ -32,8 +33,11 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -58,6 +62,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -92,6 +97,7 @@ fun PlayerScreen(
     val folderInfo by viewModel.folderInfo.collectAsState()
     val coverImages by viewModel.coverImages.collectAsState()
     val embeddedArtUri by viewModel.embeddedArtUri.collectAsState()
+    val playbackSpeed by viewModel.playbackSpeed.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -112,6 +118,8 @@ fun PlayerScreen(
             onTogglePlayPause = viewModel::togglePlayPause,
             onSkipNext = viewModel::skipToNext,
             onSkipPrevious = viewModel::skipToPrevious,
+            playbackSpeed = playbackSpeed,
+            onSetPlaybackSpeed = viewModel::setPlaybackSpeed,
             snackbarHostState = snackbarHostState,
         )
     } else {
@@ -126,6 +134,8 @@ fun PlayerScreen(
             onSeekTo = viewModel::seekTo,
             onSkipNext = viewModel::skipToNext,
             onSkipPrevious = viewModel::skipToPrevious,
+            playbackSpeed = playbackSpeed,
+            onSetPlaybackSpeed = viewModel::setPlaybackSpeed,
             snackbarHostState = snackbarHostState,
             showGalleryButton = onOpenGallery != null && folderInfo?.hasImages == true,
             onOpenGallery = {
@@ -150,6 +160,8 @@ private fun AudioPlayerContent(
     onSeekTo: (Long) -> Unit,
     onSkipNext: () -> Unit,
     onSkipPrevious: () -> Unit,
+    playbackSpeed: Float,
+    onSetPlaybackSpeed: (Float) -> Unit,
     snackbarHostState: SnackbarHostState,
     showGalleryButton: Boolean = false,
     onOpenGallery: () -> Unit = {},
@@ -276,6 +288,14 @@ private fun AudioPlayerContent(
                 }
             }
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            SpeedSelector(
+                currentSpeed = playbackSpeed,
+                onSpeedSelected = onSetPlaybackSpeed,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             Spacer(modifier = Modifier.height(16.dp))
         }
     }
@@ -383,6 +403,8 @@ private fun VideoPlayerContent(
     onTogglePlayPause: () -> Unit,
     onSkipNext: () -> Unit,
     onSkipPrevious: () -> Unit,
+    playbackSpeed: Float,
+    onSetPlaybackSpeed: (Float) -> Unit,
     snackbarHostState: SnackbarHostState,
 ) {
     val context = LocalContext.current
@@ -656,6 +678,15 @@ private fun VideoPlayerContent(
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    SpeedSelector(
+                        currentSpeed = playbackSpeed,
+                        onSpeedSelected = onSetPlaybackSpeed,
+                        modifier = Modifier.fillMaxWidth(),
+                        darkBackground = true,
+                    )
                 }
             }
         }
@@ -664,6 +695,74 @@ private fun VideoPlayerContent(
             snackbarHostState,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
+    }
+}
+
+private val SPEED_OPTIONS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+
+private fun formatSpeed(speed: Float): String {
+    val i = speed.toInt()
+    return if (speed == i.toFloat()) "${i}×" else "${speed}×"
+}
+
+@Composable
+private fun SpeedSelector(
+    currentSpeed: Float,
+    onSpeedSelected: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    darkBackground: Boolean = false,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val buttonBg = if (darkBackground) Color.White.copy(alpha = 0.18f)
+                   else MaterialTheme.colorScheme.surfaceVariant
+    val contentColor = if (darkBackground) Color.White
+                       else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Box {
+            Row(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(buttonBg)
+                    .clickable { expanded = true }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = formatSpeed(currentSpeed),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = contentColor,
+                )
+                Icon(
+                    imageVector = Icons.Default.ArrowDropDown,
+                    contentDescription = "Скорость воспроизведения",
+                    tint = contentColor,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+            ) {
+                SPEED_OPTIONS.forEach { speed ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = formatSpeed(speed),
+                                color = if (speed == currentSpeed) MaterialTheme.colorScheme.primary
+                                        else Color.Unspecified,
+                            )
+                        },
+                        onClick = {
+                            onSpeedSelected(speed)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 

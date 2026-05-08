@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
@@ -14,6 +15,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
+import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +33,7 @@ class PlaybackService : MediaSessionService() {
     @Inject lateinit var okHttpClient: OkHttpClient
     @Inject lateinit var simpleCache: SimpleCache
     @Inject lateinit var playlistRepo: PlaylistRepositoryImpl
+    @Inject lateinit var settingsRepo: SettingsRepositoryPort
 
     private var mediaSession: MediaSession? = null
 
@@ -111,6 +114,14 @@ class PlaybackService : MediaSessionService() {
         })
 
         mediaSession = MediaSession.Builder(this, player).build()
+
+        serviceScope.launch {
+            settingsRepo.playbackSpeed.collect { speed ->
+                withContext(Dispatchers.Main) {
+                    player.setPlaybackParameters(PlaybackParameters(speed))
+                }
+            }
+        }
 
         serviceScope.launch {
             playlistRepo.deletedPlaylistFlow.collect { deletedId ->
