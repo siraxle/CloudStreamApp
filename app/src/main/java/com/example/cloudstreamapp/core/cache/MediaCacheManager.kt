@@ -9,6 +9,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 @Singleton
 class MediaCacheManager @Inject constructor(
@@ -16,6 +19,9 @@ class MediaCacheManager @Inject constructor(
 ) {
     private var maxBytes = DEFAULT_MAX_BYTES
     private var released = false
+
+    private val _cacheCleared = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val cacheCleared: SharedFlow<Unit> = _cacheCleared.asSharedFlow()
 
     val simpleCache: SimpleCache by lazy {
         SimpleCache(
@@ -69,6 +75,7 @@ class MediaCacheManager @Inject constructor(
                 }
             }
         } catch (_: Exception) {}
+        _cacheCleared.tryEmit(Unit)
     }
 
     /**

@@ -85,6 +85,14 @@ class PlaylistDetailViewModel @Inject constructor(
     private var downloadJob: Job? = null
     private val singleDownloadJobs = mutableMapOf<String, Job>()
 
+    init {
+        viewModelScope.launch {
+            cacheManager.cacheCleared.collect {
+                _itemStates.value = emptyMap()
+            }
+        }
+    }
+
     fun triggerDownload() {
         downloadJob?.cancel()
         singleDownloadJobs.values.forEach { it.cancel() }
