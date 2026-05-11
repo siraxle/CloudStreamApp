@@ -31,10 +31,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 
 private val CACHE_PRESETS = listOf(
     500L * 1024 * 1024 to "500 MB",
@@ -53,8 +56,11 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val wifiOnly by viewModel.wifiOnlyPrefetch.collectAsState()
     var showClearCacheDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        viewModel.refreshCacheUsage()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            viewModel.refreshCacheUsage()
+        }
     }
 
     val usedFraction = if (cacheLimitBytes > 0) (usedCacheBytes.toFloat() / cacheLimitBytes).coerceIn(0f, 1f) else 0f
@@ -82,6 +88,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                             CACHE_PRESETS.forEach { (bytes, label) ->
                                 Button(
                                     onClick = { viewModel.setCacheLimit(bytes) },
+                                    enabled = usedCacheBytes <= bytes,
                                     modifier = Modifier
                                         .weight(1f)
                                         .padding(end = 4.dp),
