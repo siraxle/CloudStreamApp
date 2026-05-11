@@ -29,12 +29,16 @@ class SettingsViewModel @Inject constructor(
     private val _usedCacheBytes = MutableStateFlow(0L)
     val usedCacheBytes: StateFlow<Long> = _usedCacheBytes.asStateFlow()
 
+    private val _tempUsedCacheBytes = MutableStateFlow(0L)
+    val tempUsedCacheBytes: StateFlow<Long> = _tempUsedCacheBytes.asStateFlow()
+
     init {
         refreshCacheUsage()
     }
 
     fun refreshCacheUsage() {
-        _usedCacheBytes.value = cacheManager.usedBytes
+        _usedCacheBytes.value = cacheManager.permUsedBytes
+        _tempUsedCacheBytes.value = cacheManager.tempUsedBytes
     }
 
     val wifiOnlyPrefetch: StateFlow<Boolean> = settings.wifiOnlyPrefetch
@@ -51,7 +55,12 @@ class SettingsViewModel @Inject constructor(
     fun clearCache() {
         cacheManager.clearAll()
         playlistRepo.onCacheCleared()
-        _usedCacheBytes.value = cacheManager.usedBytes
+        _usedCacheBytes.value = 0L
+    }
+
+    fun clearTempCache() {
+        cacheManager.clearTemp()
+        _tempUsedCacheBytes.value = 0L
     }
 
     fun clearImageCache() {

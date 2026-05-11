@@ -109,7 +109,7 @@ class PlaylistDetailViewModel @Inject constructor(
         val job = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val cacheLimit = settingsRepo.cacheLimitBytes.first()
-                if (cacheManager.simpleCache.cacheSpace >= cacheLimit) {
+                if (cacheManager.permUsedBytes >= cacheLimit) {
                     _itemStates.update { map -> map - cloudItem.id }
                     _downloadError.tryEmit(DownloadError.CacheLimitReached)
                     return@launch
@@ -150,7 +150,7 @@ class PlaylistDetailViewModel @Inject constructor(
 
             for (batch in toDownload.chunked(PARALLEL_DOWNLOADS)) {
                 if (!isActive) break
-                if (cacheManager.simpleCache.cacheSpace >= cacheLimit) {
+                if (cacheManager.permUsedBytes >= cacheLimit) {
                     _downloadError.tryEmit(DownloadError.CacheLimitReached)
                     break
                 }
@@ -190,7 +190,7 @@ class PlaylistDetailViewModel @Inject constructor(
         onProgress: (Float) -> Unit,
     ): Long = withContext(Dispatchers.IO) {
         val dataSource = CacheDataSource.Factory()
-            .setCache(cacheManager.simpleCache)
+            .setCache(cacheManager.permanentCache)
             .setUpstreamDataSourceFactory(OkHttpDataSource.Factory(okHttpClient))
             .createDataSource()
 

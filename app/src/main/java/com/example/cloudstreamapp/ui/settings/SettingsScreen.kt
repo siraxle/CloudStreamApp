@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import com.example.cloudstreamapp.core.cache.MediaCacheManager
 
 private val CACHE_PRESETS = listOf(
     500L * 1024 * 1024 to "500 MB",
@@ -53,6 +54,7 @@ private val WarningOrange = Color(0xFFF57C00)
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val cacheLimitBytes by viewModel.cacheLimitBytes.collectAsState()
     val usedCacheBytes by viewModel.usedCacheBytes.collectAsState()
+    val tempUsedCacheBytes by viewModel.tempUsedCacheBytes.collectAsState()
     val wifiOnly by viewModel.wifiOnlyPrefetch.collectAsState()
     var showClearCacheDialog by remember { mutableStateOf(false) }
 
@@ -67,6 +69,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val isNearLimit = usedFraction >= 0.8f
     val isCritical = usedFraction >= 0.95f
 
+    val tempFraction = (tempUsedCacheBytes.toFloat() / MediaCacheManager.DEFAULT_TEMP_MAX_BYTES).coerceIn(0f, 1f)
+
     Scaffold(
         topBar = { TopAppBar(title = { Text("Настройки") }) }
     ) { padding ->
@@ -76,7 +80,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
         ) {
-            SectionHeader("Кэш")
+            SectionHeader("Кэш загрузок")
 
             ListItem(
                 headlineContent = { Text("Лимит кэша медиа") },
@@ -108,7 +112,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             )
 
             ListItem(
-                headlineContent = { Text("Использование кэша") },
+                headlineContent = { Text("Использование загрузок") },
                 supportingContent = {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
@@ -157,17 +161,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             )
 
             ListItem(
-                headlineContent = { Text("Предзагрузка только по WiFi") },
-                trailingContent = {
-                    Switch(
-                        checked = wifiOnly,
-                        onCheckedChange = { viewModel.setWifiOnlyPrefetch(it) },
-                    )
-                },
-            )
-
-            ListItem(
-                headlineContent = { Text("Очистить кэш медиа") },
+                headlineContent = { Text("Очистить кэш загрузок") },
                 trailingContent = {
                     Button(onClick = { showClearCacheDialog = true }) { Text("Очистить") }
                 },
@@ -197,6 +191,60 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 )
             }
 
+            SectionHeader("Буфер воспроизведения")
+
+            ListItem(
+                headlineContent = { Text("Временный кэш") },
+                supportingContent = {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Используется при стриминге. Очищается при каждом запуске приложения.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "${formatBytes(tempUsedCacheBytes)} / ${formatBytes(MediaCacheManager.DEFAULT_TEMP_MAX_BYTES)}",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = "${(tempFraction * 100).toInt()}%",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { tempFraction },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                },
+                trailingContent = {
+                    Button(
+                        onClick = { viewModel.clearTempCache() },
+                        enabled = tempUsedCacheBytes > 0,
+                    ) { Text("Очистить") }
+                },
+            )
+
+            SectionHeader("Прочее")
+
+            ListItem(
+                headlineContent = { Text("Предзагрузка только по WiFi") },
+                trailingContent = {
+                    Switch(
+                        checked = wifiOnly,
+                        onCheckedChange = { viewModel.setWifiOnlyPrefetch(it) },
+                    )
+                },
+            )
+
             ListItem(
                 headlineContent = { Text("Очистить кэш изображений") },
                 supportingContent = { Text("Coil disk + memory cache") },
@@ -204,7 +252,6 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                     Button(onClick = { viewModel.clearImageCache() }) { Text("Очистить") }
                 },
             )
-
         }
     }
 }

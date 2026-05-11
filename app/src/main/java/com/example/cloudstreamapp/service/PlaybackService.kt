@@ -14,6 +14,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.example.cloudstreamapp.core.cache.CompositeMediaDataSourceFactory
+import com.example.cloudstreamapp.core.cache.PermanentMediaCache
+import com.example.cloudstreamapp.core.cache.TempMediaCache
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import dagger.hilt.android.AndroidEntryPoint
@@ -31,7 +34,8 @@ import javax.inject.Inject
 class PlaybackService : MediaSessionService() {
 
     @Inject lateinit var okHttpClient: OkHttpClient
-    @Inject lateinit var simpleCache: SimpleCache
+    @PermanentMediaCache @Inject lateinit var permanentCache: SimpleCache
+    @TempMediaCache @Inject lateinit var tempCache: SimpleCache
     @Inject lateinit var playlistRepo: PlaylistRepositoryImpl
     @Inject lateinit var settingsRepo: SettingsRepositoryPort
 
@@ -48,10 +52,22 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
 
         val upstreamFactory = OkHttpDataSource.Factory(okHttpClient)
-        val cacheDataSourceFactory = CacheDataSource.Factory()
-            .setCache(simpleCache)
+
+        // Downloaded tracks → permanent cache (read-only, no upstream needed).
+        val permanentCacheFactory = CacheDataSource.Factory()
+            .setCache(permanentCache)
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+
+        // Streaming → temp cache (writes the playback buffer; auto-cleared each session).
+        val tempCacheFactory = CacheDataSource.Factory()
+            .setCache(tempCache)
             .setUpstreamDataSourceFactory(upstreamFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+
+        val mediaDataSourceFactory = CompositeMediaDataSourceFactory(
+            permanentCacheFactory,
+            tempCacheFactory,
+        )
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
@@ -68,7 +84,7 @@ class PlaybackService : MediaSessionService() {
             .build()
 
         val player = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(cacheDataSourceFactory))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(mediaDataSourceFactory))
             .setLoadControl(loadControl)
             .setAudioAttributes(audioAttributes, /* handleAudioFocus= */ true)
             .setHandleAudioBecomingNoisy(true)

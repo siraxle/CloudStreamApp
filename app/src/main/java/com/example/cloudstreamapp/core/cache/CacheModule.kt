@@ -14,9 +14,20 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object CacheModule {
 
+    @PermanentMediaCache
     @Provides
     @Singleton
-    fun provideSimpleCache(manager: MediaCacheManager): SimpleCache = manager.simpleCache
+    fun providePermanentCache(manager: MediaCacheManager): SimpleCache = manager.permanentCache
+
+    @TempMediaCache
+    @Provides
+    @Singleton
+    fun provideTempCache(manager: MediaCacheManager): SimpleCache = manager.tempCache
+
+    // Unqualified binding → permanent cache so workers need no annotation changes.
+    @Provides
+    @Singleton
+    fun provideSimpleCache(@PermanentMediaCache cache: SimpleCache): SimpleCache = cache
 
     @Provides
     @Singleton
