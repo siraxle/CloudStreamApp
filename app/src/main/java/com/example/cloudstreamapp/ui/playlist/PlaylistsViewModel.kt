@@ -50,8 +50,15 @@ class PlaylistsViewModel @Inject constructor(
 
     sealed class ImportResult {
         data class Single(val playlistId: String) : ImportResult()
-        data class Multiple(val count: Int) : ImportResult()
+        data class AlreadyExists(val playlistId: String) : ImportResult()
+        data class Multiple(val imported: Int, val skipped: Int) : ImportResult()
         object Error : ImportResult()
+    }
+
+    private sealed class SingleImportOutcome {
+        data class Created(val id: String) : SingleImportOutcome()
+        data class Existed(val id: String) : SingleImportOutcome()
+        object Failed : SingleImportOutcome()
     }
 
     sealed class ExportResult {
@@ -229,52 +236,80 @@ class PlaylistsViewModel @Inject constructor(
             }
             when (parseResult) {
                 is PlaylistImportExportManager.ParseResult.Single -> {
-                    val id = importSinglePlaylist(parseResult.data)
-                    if (id != null) _importResult.tryEmit(ImportResult.Single(id))
-                    else _importResult.tryEmit(ImportResult.Error)
+                    val outcome = importSinglePlaylist(parseResult.data)
+                    _importResult.tryEmit(
+                        when (outcome) {
+                            is SingleImportOutcome.Created -> ImportResult.Single(outcome.id)
+                            is SingleImportOutcome.Existed -> ImportResult.AlreadyExists(outcome.id)
+                            SingleImportOutcome.Failed -> ImportResult.Error
+                        }
+                    )
                 }
                 is PlaylistImportExportManager.ParseResult.Bundle -> {
-                    var count = 0
+                    var imported = 0
+                    var skipped = 0
                     for (entry in parseResult.playlists) {
                         val singleData = PlaylistExportData(
                             name = entry.name,
                             exportedAt = System.currentTimeMillis(),
                             tracks = entry.tracks,
                         )
-                        if (importSinglePlaylist(singleData) != null) count++
+                        when (importSinglePlaylist(singleData)) {
+                            is SingleImportOutcome.Created -> imported++
+                            is SingleImportOutcome.Existed -> skipped++
+                            SingleImportOutcome.Failed -> Unit
+                        }
                     }
-                    _importResult.tryEmit(ImportResult.Multiple(count))
+                    _importResult.tryEmit(ImportResult.Multiple(imported, skipped))
                 }
             }
         }
     }
 
-    private suspend fun importSinglePlaylist(data: PlaylistExportData): String? = runCatching {
-        val newPlaylistId = UUID.randomUUID().toString()
-        val now = System.currentTimeMillis()
-        repo.create(
-            Playlist(
-                id = newPlaylistId,
-                name = data.name,
-                coverPath = null,
-                createdAt = now,
-                updatedAt = now,
+    private suspend fun importSinglePlaylist(data: PlaylistExportData): SingleImportOutcome {
+        val existingId = findDuplicatePlaylist(data)
+        if (existingId != null) return SingleImportOutcome.Existed(existingId)
+        return runCatching {
+            val newPlaylistId = UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
+            repo.create(
+                Playlist(
+                    id = newPlaylistId,
+                    name = data.name,
+                    coverPath = null,
+                    createdAt = now,
+                    updatedAt = now,
+                )
             )
-        )
-        for (track in data.tracks) {
-            val cloudType = runCatching { CloudType.valueOf(track.cloudType) }.getOrDefault(CloudType.HTTP)
-            val existingId = repo.findMetadataId(track.sourceId, track.relativePath)
-            val mediaId = existingId ?: UUID.randomUUID().toString()
-            val cloudItem = CloudItem(
-                id = mediaId,
-                name = track.name,
-                path = CloudPath(track.sourceId, track.relativePath, cloudType),
-                type = CloudItem.ItemType.FILE,
-                sizeBytes = track.sizeBytes,
-                mimeType = track.mimeType,
-            )
-            repo.saveMediaAndAddToPlaylist(cloudItem, newPlaylistId)
+            for (track in data.tracks) {
+                val cloudType = runCatching { CloudType.valueOf(track.cloudType) }.getOrDefault(CloudType.HTTP)
+                val existingMediaId = repo.findMetadataId(track.sourceId, track.relativePath)
+                val mediaId = existingMediaId ?: UUID.randomUUID().toString()
+                val cloudItem = CloudItem(
+                    id = mediaId,
+                    name = track.name,
+                    path = CloudPath(track.sourceId, track.relativePath, cloudType),
+                    type = CloudItem.ItemType.FILE,
+                    sizeBytes = track.sizeBytes,
+                    mimeType = track.mimeType,
+                )
+                repo.saveMediaAndAddToPlaylist(cloudItem, newPlaylistId)
+            }
+            SingleImportOutcome.Created(newPlaylistId)
+        }.getOrElse { SingleImportOutcome.Failed }
+    }
+
+    private suspend fun findDuplicatePlaylist(data: PlaylistExportData): String? {
+        val incomingKeys = data.tracks.map { "${it.sourceId}|${it.relativePath}" }.toSet()
+        val existing = repo.getAll().first()
+        for (playlist in existing) {
+            if (playlist.name != data.name) continue
+            val items = repo.getItemsWithMetadata(playlist.id).first()
+            val existingKeys = items.mapNotNull { (_, cloudItem) ->
+                cloudItem?.let { "${it.path.sourceId}|${it.path.relativePath}" }
+            }.toSet()
+            if (existingKeys == incomingKeys) return playlist.id
         }
-        newPlaylistId
-    }.getOrNull()
+        return null
+    }
 }

@@ -84,10 +84,19 @@ fun PlaylistsScreen(
             when (result) {
                 is PlaylistsViewModel.ImportResult.Single ->
                     onPlaylistClick(result.playlistId)
-                is PlaylistsViewModel.ImportResult.Multiple ->
-                    snackbarHostState.showSnackbar(
-                        "Импортировано ${pluralPlaylists(result.count)}"
-                    )
+                is PlaylistsViewModel.ImportResult.AlreadyExists ->
+                    snackbarHostState.showSnackbar("Плейлист уже добавлен")
+                is PlaylistsViewModel.ImportResult.Multiple -> {
+                    val msg = buildString {
+                        if (result.imported > 0) append("Импортировано ${pluralPlaylists(result.imported)}")
+                        if (result.skipped > 0) {
+                            if (result.imported > 0) append(", ")
+                            append("пропущено ${pluralPlaylists(result.skipped)} (уже существует)")
+                        }
+                        if (result.imported == 0 && result.skipped == 0) append("Нечего импортировать")
+                    }
+                    snackbarHostState.showSnackbar(msg)
+                }
                 PlaylistsViewModel.ImportResult.Error ->
                     snackbarHostState.showSnackbar(
                         "Не удалось импортировать плейлист. Проверьте файл."
