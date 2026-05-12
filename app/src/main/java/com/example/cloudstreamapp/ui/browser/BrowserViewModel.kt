@@ -56,8 +56,12 @@ class BrowserViewModel @Inject constructor(
     private val _sortOrder = MutableStateFlow(SortOrder.NAME_ASC)
     val sortOrder: StateFlow<SortOrder> = _sortOrder.asStateFlow()
 
+    private val _currentPage = MutableStateFlow(0)
+    val currentPage: StateFlow<Int> = _currentPage.asStateFlow()
+    private val _savedPages = mutableListOf<Int>()
+
     @OptIn(ExperimentalCoroutinesApi::class)
-    val items: StateFlow<List<CloudItem>> = combine(_pathStack, _sortOrder) { stack, sort ->
+    private val _allItems: StateFlow<List<CloudItem>> = combine(_pathStack, _sortOrder) { stack, sort ->
         Pair(stack, sort)
     }
         .flatMapLatest { (stack, sort) ->
@@ -97,25 +101,49 @@ class BrowserViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val totalPages: StateFlow<Int> = _allItems
+        .map { list -> if (list.isEmpty()) 0 else (list.size + PAGE_SIZE - 1) / PAGE_SIZE }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    val items: StateFlow<List<CloudItem>> = combine(_allItems, _currentPage) { all, page ->
+        all.drop(page * PAGE_SIZE).take(PAGE_SIZE)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun nextPage() {
+        if (_currentPage.value < totalPages.value - 1) _currentPage.value++
+    }
+
+    fun previousPage() {
+        if (_currentPage.value > 0) _currentPage.value--
+    }
+
     fun navigateTo(path: String) {
+        _savedPages.add(_currentPage.value)
+        _currentPage.value = 0
         _pathStack.value = _pathStack.value + path
     }
 
     fun navigateUp(): Boolean {
         val stack = _pathStack.value
         if (stack.size <= 1) return false
+        _currentPage.value = _savedPages.removeLastOrNull() ?: 0
         _pathStack.value = stack.dropLast(1)
         return true
     }
 
     fun navigateToIndex(index: Int) {
         val stack = _pathStack.value
-        if (index < stack.size) {
-            _pathStack.value = stack.take(index + 1)
-        }
+        if (index < 0 || index >= stack.size || index == stack.size - 1) return
+        val restoredPage = _savedPages.getOrElse(index) { 0 }
+        repeat(stack.size - 1 - index) { _savedPages.removeLastOrNull() }
+        _currentPage.value = restoredPage
+        _pathStack.value = stack.take(index + 1)
     }
 
-    fun setSortOrder(order: SortOrder) { _sortOrder.value = order }
+    fun setSortOrder(order: SortOrder) {
+        _sortOrder.value = order
+        _currentPage.value = 0
+    }
     fun dismissError() { _error.value = null }
 
     // Playlists
@@ -188,6 +216,8 @@ class BrowserViewModel @Inject constructor(
 
     fun dismissPlaylistMessage() { _playlistMessage.value = null }
 }
+
+private const val PAGE_SIZE = 10
 
 enum class SortOrder(val label: String) {
     NAME_ASC("По имени А-Я"),

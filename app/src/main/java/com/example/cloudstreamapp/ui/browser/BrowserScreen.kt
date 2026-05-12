@@ -98,6 +98,8 @@ fun BrowserScreen(
     val playlists by viewModel.playlists.collectAsState()
     val playlistMessage by viewModel.playlistMessage.collectAsState()
     val sortOrder by viewModel.sortOrder.collectAsState()
+    val currentPage by viewModel.currentPage.collectAsState()
+    val totalPages by viewModel.totalPages.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     var playlistTarget by remember { mutableStateOf<PlaylistTarget?>(null) }
@@ -177,51 +179,67 @@ fun BrowserScreen(
             when {
                 isLoading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 items.isEmpty() -> Text("Папка пуста", modifier = Modifier.align(Alignment.Center))
-                isGridView -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 140.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(8.dp),
-                ) {
-                    items(items, key = { it.id }) { item ->
-                        CloudItemCard(
-                            item = item,
-                            onClick = {
-                                if (item.type == CloudItem.ItemType.DIRECTORY) {
-                                    viewModel.navigateTo(item.path.relativePath)
-                                } else {
-                                    onPlayMedia(item, viewModel.currentPath)
-                                }
-                            },
-                            onAddToPlaylist = {
-                                playlistTarget = if (item.type == CloudItem.ItemType.DIRECTORY) {
-                                    PlaylistTarget.Folder(item)
-                                } else {
-                                    PlaylistTarget.File(item)
-                                }
-                            },
-                        )
+                else -> Column(modifier = Modifier.fillMaxSize()) {
+                    if (isGridView) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = 140.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(8.dp),
+                        ) {
+                            items(items, key = { it.id }) { item ->
+                                CloudItemCard(
+                                    item = item,
+                                    onClick = {
+                                        if (item.type == CloudItem.ItemType.DIRECTORY) {
+                                            viewModel.navigateTo(item.path.relativePath)
+                                        } else {
+                                            onPlayMedia(item, viewModel.currentPath)
+                                        }
+                                    },
+                                    onAddToPlaylist = {
+                                        playlistTarget = if (item.type == CloudItem.ItemType.DIRECTORY) {
+                                            PlaylistTarget.Folder(item)
+                                        } else {
+                                            PlaylistTarget.File(item)
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    } else {
+                        LazyColumn(modifier = Modifier.weight(1f)) {
+                            items(items, key = { it.id }) { item ->
+                                CloudItemRow(
+                                    item = item,
+                                    onClick = {
+                                        if (item.type == CloudItem.ItemType.DIRECTORY) {
+                                            viewModel.navigateTo(item.path.relativePath)
+                                        } else {
+                                            onPlayMedia(item, viewModel.currentPath)
+                                        }
+                                    },
+                                    onPlay = { onPlayMedia(item, viewModel.currentPath) },
+                                    onAddToPlaylist = {
+                                        playlistTarget = if (item.type == CloudItem.ItemType.DIRECTORY) {
+                                            PlaylistTarget.Folder(item)
+                                        } else {
+                                            PlaylistTarget.File(item)
+                                        }
+                                    },
+                                )
+                            }
+                        }
                     }
-                }
-                else -> LazyColumn {
-                    items(items, key = { it.id }) { item ->
-                        CloudItemRow(
-                            item = item,
-                            onClick = {
-                                if (item.type == CloudItem.ItemType.DIRECTORY) {
-                                    viewModel.navigateTo(item.path.relativePath)
-                                } else {
-                                    onPlayMedia(item, viewModel.currentPath)
-                                }
-                            },
-                            onPlay = { onPlayMedia(item, viewModel.currentPath) },
-                            onAddToPlaylist = {
-                                playlistTarget = if (item.type == CloudItem.ItemType.DIRECTORY) {
-                                    PlaylistTarget.Folder(item)
-                                } else {
-                                    PlaylistTarget.File(item)
-                                }
-                            },
+                    if (totalPages > 1) {
+                        HorizontalDivider()
+                        BrowserPaginationRow(
+                            currentPage = currentPage,
+                            totalPages = totalPages,
+                            onPrevious = { viewModel.previousPage() },
+                            onNext = { viewModel.nextPage() },
                         )
                     }
                 }
@@ -390,6 +408,33 @@ private fun Breadcrumbs(
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun BrowserPaginationRow(
+    currentPage: Int,
+    totalPages: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+) {
+    Row(
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        IconButton(onClick = onPrevious, enabled = currentPage > 0) {
+            Icon(Icons.Default.ChevronLeft, contentDescription = "Предыдущая страница")
+        }
+        Text(
+            text = "${currentPage + 1} / $totalPages",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        IconButton(onClick = onNext, enabled = currentPage < totalPages - 1) {
+            Icon(Icons.Default.ChevronRight, contentDescription = "Следующая страница")
         }
     }
 }
