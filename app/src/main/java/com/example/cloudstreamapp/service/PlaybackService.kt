@@ -6,6 +6,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import com.example.cloudstreamapp.data.equalizer.EqualizerController
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.SimpleCache
@@ -38,6 +39,7 @@ class PlaybackService : MediaSessionService() {
     @TempMediaCache @Inject lateinit var tempCache: SimpleCache
     @Inject lateinit var playlistRepo: PlaylistRepositoryImpl
     @Inject lateinit var settingsRepo: SettingsRepositoryPort
+    @Inject lateinit var equalizerController: EqualizerController
 
     private var mediaSession: MediaSession? = null
 
@@ -90,7 +92,14 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
 
+        // Attach equalizer immediately (ExoPlayer pre-allocates an audio session on build).
+        equalizerController.attach(player.audioSessionId, serviceScope)
+
         player.addListener(object : Player.Listener {
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                equalizerController.attach(audioSessionId, serviceScope)
+            }
+
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
                 val artworkData = mediaMetadata.artworkData ?: return
                 val currentItem = player.currentMediaItem ?: return
@@ -157,6 +166,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         serviceScope.cancel()
+        equalizerController.release()
         mediaSession?.run {
             player.release()
             release()

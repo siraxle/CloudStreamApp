@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Collections
+import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -108,6 +109,8 @@ fun PlayerScreen(
         }
     }
 
+    var showEqualizer by remember { mutableStateOf(false) }
+
     if (state.hasVideo && player != null) {
         VideoPlayerContent(
             player = player!!,
@@ -121,6 +124,7 @@ fun PlayerScreen(
             playbackSpeed = playbackSpeed,
             onSetPlaybackSpeed = viewModel::setPlaybackSpeed,
             snackbarHostState = snackbarHostState,
+            onOpenEqualizer = { showEqualizer = true },
         )
     } else {
         AudioPlayerContent(
@@ -143,7 +147,12 @@ fun PlayerScreen(
                     onOpenGallery?.invoke(info.cloudType, info.sourceUrl, info.folderPath)
                 }
             },
+            onOpenEqualizer = { showEqualizer = true },
         )
+    }
+
+    if (showEqualizer) {
+        EqualizerBottomSheet(onDismiss = { showEqualizer = false })
     }
 }
 
@@ -165,6 +174,7 @@ private fun AudioPlayerContent(
     snackbarHostState: SnackbarHostState,
     showGalleryButton: Boolean = false,
     onOpenGallery: () -> Unit = {},
+    onOpenEqualizer: () -> Unit = {},
 ) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -181,6 +191,9 @@ private fun AudioPlayerContent(
                         IconButton(onClick = onOpenGallery) {
                             Icon(Icons.Default.Collections, contentDescription = "Фото")
                         }
+                    }
+                    IconButton(onClick = onOpenEqualizer) {
+                        Icon(Icons.Default.Equalizer, contentDescription = "Эквалайзер")
                     }
                 },
             )
@@ -406,6 +419,7 @@ private fun VideoPlayerContent(
     playbackSpeed: Float,
     onSetPlaybackSpeed: (Float) -> Unit,
     snackbarHostState: SnackbarHostState,
+    onOpenEqualizer: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val activity = context as Activity
@@ -599,6 +613,13 @@ private fun VideoPlayerContent(
                             .weight(1f)
                             .padding(horizontal = 4.dp),
                     )
+                    IconButton(onClick = onOpenEqualizer) {
+                        Icon(
+                            Icons.Default.Equalizer,
+                            contentDescription = "Эквалайзер",
+                            tint = Color.White,
+                        )
+                    }
                     IconButton(onClick = {
                         resizeMode =
                             if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT)
