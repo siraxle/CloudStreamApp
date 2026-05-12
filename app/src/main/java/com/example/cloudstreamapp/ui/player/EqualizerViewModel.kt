@@ -20,10 +20,10 @@ class EqualizerViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     val preset: StateFlow<EqualizerPreset> = controller.preset
-        .stateIn(viewModelScope, SharingStarted.Eagerly, EqualizerPreset.FLAT)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, EqualizerPreset.POP)
 
     val bandGains: StateFlow<List<Short>> = controller.bandGains
-        .stateIn(viewModelScope, SharingStarted.Eagerly, List(EqualizerController.DEFAULT_BAND_COUNT) { 0.toShort() })
+        .stateIn(viewModelScope, SharingStarted.Eagerly, EqualizerPreset.POP.bands.toList())
 
     val bandFrequencies: StateFlow<List<Int>> = controller.bandFrequencies
     val bandLevelRange: StateFlow<Pair<Int, Int>> = controller.bandLevelRange

@@ -43,7 +43,7 @@ class EqualizerController @Inject constructor(
 
     val preset: Flow<EqualizerPreset> = dataStore.data.map { prefs ->
         val name = prefs[Keys.PRESET]
-        EqualizerPreset.entries.firstOrNull { it.name == name } ?: EqualizerPreset.FLAT
+        EqualizerPreset.entries.firstOrNull { it.name == name } ?: EqualizerPreset.POP
     }
 
     val bandGains: Flow<List<Short>> = dataStore.data.map { prefs ->
