@@ -73,7 +73,7 @@ fun EqualizerBottomSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 EqualizerPreset.entries
                     .filter { it != EqualizerPreset.CUSTOM }
@@ -81,7 +81,12 @@ fun EqualizerBottomSheet(
                         FilterChip(
                             selected = preset == p,
                             onClick = { viewModel.setPreset(p) },
-                            label = { Text(p.displayName) },
+                            label = {
+                                Text(
+                                    text = p.displayName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            },
                             enabled = isEnabled,
                         )
                     }
@@ -89,7 +94,12 @@ fun EqualizerBottomSheet(
                     FilterChip(
                         selected = true,
                         onClick = {},
-                        label = { Text(EqualizerPreset.CUSTOM.displayName) },
+                        label = {
+                            Text(
+                                text = EqualizerPreset.CUSTOM.displayName,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        },
                         enabled = false,
                     )
                 }
