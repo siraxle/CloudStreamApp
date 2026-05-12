@@ -6,7 +6,12 @@ import androidx.lifecycle.viewModelScope
 import com.example.cloudstreamapp.core.playlist.PlaylistImportExportManager
 import com.example.cloudstreamapp.data.playlist.FavoritePlaylistRepositoryImpl
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
+import com.example.cloudstreamapp.domain.model.CloudItem
+import com.example.cloudstreamapp.domain.model.CloudPath
+import com.example.cloudstreamapp.domain.model.CloudType
 import com.example.cloudstreamapp.domain.model.FavoritePlaylist
+import com.example.cloudstreamapp.domain.model.Playlist
+import com.example.cloudstreamapp.domain.model.PlaylistBundleData
 import com.example.cloudstreamapp.domain.model.PlaylistExportData
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -18,9 +23,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.UUID
 import javax.inject.Inject
 
 @HiltViewModel
@@ -35,8 +43,21 @@ class FavoritesViewModel @Inject constructor(
         val isInMainList: Boolean,
     )
 
+    sealed class ImportResult {
+        data class Single(val playlistId: String) : ImportResult()
+        data class AlreadyExists(val playlistId: String) : ImportResult()
+        data class Multiple(val imported: Int, val skipped: Int) : ImportResult()
+        object Error : ImportResult()
+    }
+
+    private sealed class SingleImportOutcome {
+        data class Created(val id: String) : SingleImportOutcome()
+        data class Existed(val id: String) : SingleImportOutcome()
+        object Failed : SingleImportOutcome()
+    }
+
     sealed class ExportResult {
-        object Success : ExportResult()
+        data class Success(val count: Int) : ExportResult()
         object Error : ExportResult()
     }
 
@@ -53,21 +74,25 @@ class FavoritesViewModel @Inject constructor(
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    // --- Delete ---
+
     private val _pendingDeleteId = MutableStateFlow<String?>(null)
     val pendingDeleteId: StateFlow<String?> = _pendingDeleteId.asStateFlow()
 
+    fun requestDelete(id: String) { _pendingDeleteId.value = id }
+
+    fun confirmDelete() {
+        val id = _pendingDeleteId.value ?: return
+        _pendingDeleteId.value = null
+        viewModelScope.launch { favoriteRepo.delete(id) }
+    }
+
+    fun cancelDelete() { _pendingDeleteId.value = null }
+
+    // --- Restore ---
+
     private val _restoredPlaylistId = MutableStateFlow<String?>(null)
     val restoredPlaylistId: StateFlow<String?> = _restoredPlaylistId.asStateFlow()
-
-    // Holds the favoriteId to export while waiting for the file-save URI from the picker
-    private val _pendingExportId = MutableStateFlow<String?>(null)
-
-    // Emits the suggested filename to trigger the system file-save dialog in the Composable
-    private val _exportFileSuggestion = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val exportFileSuggestion: SharedFlow<String> = _exportFileSuggestion.asSharedFlow()
-
-    private val _exportResult = MutableSharedFlow<ExportResult>(extraBufferCapacity = 1)
-    val exportResult: SharedFlow<ExportResult> = _exportResult.asSharedFlow()
 
     fun restore(favoriteId: String) {
         viewModelScope.launch {
@@ -76,9 +101,17 @@ class FavoritesViewModel @Inject constructor(
         }
     }
 
-    fun consumeRestoredPlaylistId() {
-        _restoredPlaylistId.value = null
-    }
+    fun consumeRestoredPlaylistId() { _restoredPlaylistId.value = null }
+
+    // --- Per-row export (single favorite as JSON file) ---
+
+    private val _pendingExportId = MutableStateFlow<String?>(null)
+
+    private val _exportFileSuggestion = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val exportFileSuggestion: SharedFlow<String> = _exportFileSuggestion.asSharedFlow()
+
+    private val _exportResult = MutableSharedFlow<ExportResult>(extraBufferCapacity = 1)
+    val exportResult: SharedFlow<ExportResult> = _exportResult.asSharedFlow()
 
     fun requestExport(favoriteId: String) {
         val name = favorites.value
@@ -97,8 +130,7 @@ class FavoritesViewModel @Inject constructor(
         _pendingExportId.value = null
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                val favorite = favoriteRepo.getById(favoriteId)
-                    ?: error("Favorite not found")
+                val favorite = favoriteRepo.getById(favoriteId) ?: error("Favorite not found")
                 val exportData = PlaylistExportData(
                     name = favorite.name,
                     exportedAt = System.currentTimeMillis(),
@@ -115,23 +147,180 @@ class FavoritesViewModel @Inject constructor(
                 )
                 importExportManager.writeToUri(uri, exportData)
             }.fold(
-                onSuccess = { _exportResult.tryEmit(ExportResult.Success) },
+                onSuccess = { _exportResult.tryEmit(ExportResult.Success(1)) },
                 onFailure = { _exportResult.tryEmit(ExportResult.Error) },
             )
         }
     }
 
-    fun requestDelete(id: String) {
-        _pendingDeleteId.value = id
+    // --- Selection mode for bulk export ---
+
+    private val _isSelectionMode = MutableStateFlow(false)
+    val isSelectionMode: StateFlow<Boolean> = _isSelectionMode.asStateFlow()
+
+    private val _selectedIds = MutableStateFlow<Set<String>>(emptySet())
+    val selectedIds: StateFlow<Set<String>> = _selectedIds.asStateFlow()
+
+    fun enterSelectionMode() { _isSelectionMode.value = true }
+
+    fun toggleSelection(id: String) {
+        _selectedIds.update { if (id in it) it - id else it + id }
     }
 
-    fun confirmDelete() {
-        val id = _pendingDeleteId.value ?: return
-        _pendingDeleteId.value = null
-        viewModelScope.launch { favoriteRepo.delete(id) }
+    fun selectAll() {
+        _selectedIds.value = favorites.value.map { it.favorite.id }.toSet()
     }
 
-    fun cancelDelete() {
-        _pendingDeleteId.value = null
+    fun clearSelection() {
+        _selectedIds.value = emptySet()
+        _isSelectionMode.value = false
+    }
+
+    // --- Bulk export (selected favorites as a bundle) ---
+
+    private val _pendingBulkExportIds = MutableStateFlow<Set<String>>(emptySet())
+
+    private val _bulkExportFileSuggestion = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val bulkExportFileSuggestion: SharedFlow<String> = _bulkExportFileSuggestion.asSharedFlow()
+
+    private val _bulkExportResult = MutableSharedFlow<ExportResult>(extraBufferCapacity = 1)
+    val bulkExportResult: SharedFlow<ExportResult> = _bulkExportResult.asSharedFlow()
+
+    fun requestBulkExport() {
+        val ids = _selectedIds.value
+        _pendingBulkExportIds.value = ids
+        val filename = if (ids.size == 1) {
+            val name = favorites.value.firstOrNull { it.favorite.id in ids }
+                ?.favorite?.name
+                ?.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                ?.take(80)?.ifBlank { "playlist" } ?: "playlist"
+            "$name.json"
+        } else {
+            "playlists_${ids.size}.json"
+        }
+        _bulkExportFileSuggestion.tryEmit(filename)
+    }
+
+    fun bulkExportToUri(uri: Uri) {
+        val ids = _pendingBulkExportIds.value
+        _pendingBulkExportIds.value = emptySet()
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val entries = ids.mapNotNull { id ->
+                    val favorite = favorites.value.firstOrNull { it.favorite.id == id }?.favorite
+                        ?: return@mapNotNull null
+                    PlaylistBundleData.PlaylistEntry(
+                        name = favorite.name,
+                        tracks = favorite.tracks.map { track ->
+                            PlaylistExportData.ExportTrack(
+                                name = track.name,
+                                sourceId = track.sourceId,
+                                relativePath = track.relativePath,
+                                cloudType = track.cloudType,
+                                sizeBytes = track.sizeBytes,
+                                mimeType = track.mimeType,
+                            )
+                        },
+                    )
+                }
+                importExportManager.writeBundleToUri(uri, entries)
+                entries.size
+            }.fold(
+                onSuccess = { count -> _bulkExportResult.tryEmit(ExportResult.Success(count)) },
+                onFailure = { _bulkExportResult.tryEmit(ExportResult.Error) },
+            )
+            _selectedIds.value = emptySet()
+            _isSelectionMode.value = false
+        }
+    }
+
+    // --- Import ---
+
+    private val _importResult = MutableSharedFlow<ImportResult>(extraBufferCapacity = 1)
+    val importResult: SharedFlow<ImportResult> = _importResult.asSharedFlow()
+
+    fun importFromUri(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val parseResult = importExportManager.parseMultiFromUri(uri) ?: run {
+                _importResult.tryEmit(ImportResult.Error)
+                return@launch
+            }
+            when (parseResult) {
+                is PlaylistImportExportManager.ParseResult.Single -> {
+                    val outcome = importSinglePlaylist(parseResult.data)
+                    _importResult.tryEmit(
+                        when (outcome) {
+                            is SingleImportOutcome.Created -> ImportResult.Single(outcome.id)
+                            is SingleImportOutcome.Existed -> ImportResult.AlreadyExists(outcome.id)
+                            SingleImportOutcome.Failed -> ImportResult.Error
+                        }
+                    )
+                }
+                is PlaylistImportExportManager.ParseResult.Bundle -> {
+                    var imported = 0
+                    var skipped = 0
+                    for (entry in parseResult.playlists) {
+                        val singleData = PlaylistExportData(
+                            name = entry.name,
+                            exportedAt = System.currentTimeMillis(),
+                            tracks = entry.tracks,
+                        )
+                        when (importSinglePlaylist(singleData)) {
+                            is SingleImportOutcome.Created -> imported++
+                            is SingleImportOutcome.Existed -> skipped++
+                            SingleImportOutcome.Failed -> Unit
+                        }
+                    }
+                    _importResult.tryEmit(ImportResult.Multiple(imported, skipped))
+                }
+            }
+        }
+    }
+
+    private suspend fun importSinglePlaylist(data: PlaylistExportData): SingleImportOutcome {
+        val existingId = findDuplicatePlaylist(data)
+        if (existingId != null) return SingleImportOutcome.Existed(existingId)
+        return runCatching {
+            val newPlaylistId = UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
+            playlistRepo.create(
+                Playlist(
+                    id = newPlaylistId,
+                    name = data.name,
+                    coverPath = null,
+                    createdAt = now,
+                    updatedAt = now,
+                )
+            )
+            for (track in data.tracks) {
+                val cloudType = runCatching { CloudType.valueOf(track.cloudType) }.getOrDefault(CloudType.HTTP)
+                val existingMediaId = playlistRepo.findMetadataId(track.sourceId, track.relativePath)
+                val mediaId = existingMediaId ?: UUID.randomUUID().toString()
+                val cloudItem = CloudItem(
+                    id = mediaId,
+                    name = track.name,
+                    path = CloudPath(track.sourceId, track.relativePath, cloudType),
+                    type = CloudItem.ItemType.FILE,
+                    sizeBytes = track.sizeBytes,
+                    mimeType = track.mimeType,
+                )
+                playlistRepo.saveMediaAndAddToPlaylist(cloudItem, newPlaylistId)
+            }
+            SingleImportOutcome.Created(newPlaylistId)
+        }.getOrElse { SingleImportOutcome.Failed }
+    }
+
+    private suspend fun findDuplicatePlaylist(data: PlaylistExportData): String? {
+        val incomingKeys = data.tracks.map { "${it.sourceId}|${it.relativePath}" }.toSet()
+        val existing = playlistRepo.getAll().first()
+        for (playlist in existing) {
+            if (playlist.name != data.name) continue
+            val items = playlistRepo.getItemsWithMetadata(playlist.id).first()
+            val existingKeys = items.mapNotNull { (_, cloudItem) ->
+                cloudItem?.let { "${it.path.sourceId}|${it.path.relativePath}" }
+            }.toSet()
+            if (existingKeys == incomingKeys) return playlist.id
+        }
+        return null
     }
 }

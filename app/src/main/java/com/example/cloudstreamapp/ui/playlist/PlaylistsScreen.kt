@@ -1,7 +1,5 @@
 package com.example.cloudstreamapp.ui.playlist
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,17 +15,11 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Bookmarks
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Downloading
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.OfflinePin
-import androidx.compose.material.icons.filled.PlaylistAddCheck
 import androidx.compose.material.icons.filled.QueueMusic
-import androidx.compose.material.icons.filled.SelectAll
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -42,7 +34,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,114 +55,25 @@ fun PlaylistsScreen(
 ) {
     val playlists by viewModel.playlists.collectAsState()
     val pendingDeleteId by viewModel.pendingDeleteId.collectAsState()
-    val isSelectionMode by viewModel.isSelectionMode.collectAsState()
-    val selectedIds by viewModel.selectedIds.collectAsState()
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
-    var showImportDialog by rememberSaveable { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
-
-    val openFileLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri -> uri?.let { viewModel.importFromUri(it) } }
-
-    val saveFileLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json")
-    ) { uri -> uri?.let { viewModel.bulkExportToUri(it) } }
-
-    LaunchedEffect(viewModel) {
-        viewModel.importResult.collect { result ->
-            when (result) {
-                is PlaylistsViewModel.ImportResult.Single ->
-                    onPlaylistClick(result.playlistId)
-                is PlaylistsViewModel.ImportResult.AlreadyExists ->
-                    snackbarHostState.showSnackbar("Плейлист уже добавлен")
-                is PlaylistsViewModel.ImportResult.Multiple -> {
-                    val msg = buildString {
-                        if (result.imported > 0) append("Импортировано ${pluralPlaylists(result.imported)}")
-                        if (result.skipped > 0) {
-                            if (result.imported > 0) append(", ")
-                            append("пропущено ${pluralPlaylists(result.skipped)} (уже существует)")
-                        }
-                        if (result.imported == 0 && result.skipped == 0) append("Нечего импортировать")
-                    }
-                    snackbarHostState.showSnackbar(msg)
-                }
-                PlaylistsViewModel.ImportResult.Error ->
-                    snackbarHostState.showSnackbar(
-                        "Не удалось импортировать плейлист. Проверьте файл."
-                    )
-            }
-        }
-    }
-
-    LaunchedEffect(viewModel) {
-        viewModel.bulkExportFileSuggestion.collect { filename ->
-            saveFileLauncher.launch(filename)
-        }
-    }
-
-    LaunchedEffect(viewModel) {
-        viewModel.bulkExportResult.collect { result ->
-            when (result) {
-                is PlaylistsViewModel.ExportResult.Success ->
-                    snackbarHostState.showSnackbar(
-                        "Экспортировано ${pluralPlaylists(result.count)}"
-                    )
-                PlaylistsViewModel.ExportResult.Error ->
-                    snackbarHostState.showSnackbar("Ошибка при экспорте")
-            }
-        }
-    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            if (isSelectionMode) {
-                TopAppBar(
-                    navigationIcon = {
-                        IconButton(onClick = { viewModel.clearSelection() }) {
-                            Icon(Icons.Default.Close, contentDescription = "Отмена")
-                        }
-                    },
-                    title = { Text("Выбрано ${selectedIds.size}") },
-                    actions = {
-                        IconButton(onClick = { viewModel.selectAll() }) {
-                            Icon(Icons.Default.SelectAll, contentDescription = "Выбрать все")
-                        }
-                        IconButton(
-                            onClick = { viewModel.requestBulkExport() },
-                            enabled = selectedIds.isNotEmpty(),
-                        ) {
-                            Icon(Icons.Default.Share, contentDescription = "Экспортировать выбранные")
-                        }
-                    },
-                )
-            } else {
-                TopAppBar(
-                    title = { Text("Плейлисты") },
-                    actions = {
-                        IconButton(onClick = { showImportDialog = true }) {
-                            Icon(Icons.Default.FolderOpen, contentDescription = "Импортировать")
-                        }
-                        IconButton(onClick = onFavoritesClick) {
-                            Icon(Icons.Default.Bookmarks, contentDescription = "Избранные плейлисты")
-                        }
-                        IconButton(
-                            onClick = { viewModel.enterSelectionMode() },
-                            enabled = playlists.isNotEmpty(),
-                        ) {
-                            Icon(Icons.Default.PlaylistAddCheck, contentDescription = "Выбрать для экспорта")
-                        }
-                    },
-                )
-            }
+            TopAppBar(
+                title = { Text("Плейлисты") },
+                actions = {
+                    IconButton(onClick = onFavoritesClick) {
+                        Icon(Icons.Default.Bookmarks, contentDescription = "Избранные плейлисты")
+                    }
+                },
+            )
         },
         floatingActionButton = {
-            if (!isSelectionMode) {
-                FloatingActionButton(onClick = { showCreateDialog = true }) {
-                    Icon(Icons.Default.Add, contentDescription = "Новый плейлист")
-                }
+            FloatingActionButton(onClick = { showCreateDialog = true }) {
+                Icon(Icons.Default.Add, contentDescription = "Новый плейлист")
             }
         },
     ) { padding ->
@@ -188,15 +90,9 @@ fun PlaylistsScreen(
             } else {
                 LazyColumn {
                     items(playlists, key = { it.playlist.id }) { item ->
-                        val isSelected = item.playlist.id in selectedIds
                         PlaylistRow(
                             item = item,
-                            isSelectionMode = isSelectionMode,
-                            isSelected = isSelected,
-                            onClick = {
-                                if (isSelectionMode) viewModel.toggleSelection(item.playlist.id)
-                                else onPlaylistClick(item.playlist.id)
-                            },
+                            onClick = { onPlaylistClick(item.playlist.id) },
                             onDelete = { viewModel.requestDeletePlaylist(item.playlist.id) },
                             onToggleFavorite = { viewModel.toggleFavorite(item.playlist.id) },
                         )
@@ -232,25 +128,6 @@ fun PlaylistsScreen(
         )
     }
 
-    if (showImportDialog) {
-        AlertDialog(
-            onDismissRequest = { showImportDialog = false },
-            title = { Text("Импорт плейлиста") },
-            text = { Text("Выберите JSON-файл с сохранённым плейлистом или архивом плейлистов.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showImportDialog = false
-                    openFileLauncher.launch(arrayOf("application/json", "*/*"))
-                }) {
-                    Text("Выбрать файл")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showImportDialog = false }) { Text("Отмена") }
-            },
-        )
-    }
-
     if (showCreateDialog) {
         CreatePlaylistDialog(
             onDismiss = { showCreateDialog = false },
@@ -265,8 +142,6 @@ fun PlaylistsScreen(
 @Composable
 private fun PlaylistRow(
     item: PlaylistsViewModel.PlaylistUiItem,
-    isSelectionMode: Boolean,
-    isSelected: Boolean,
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onToggleFavorite: () -> Unit,
@@ -313,30 +188,23 @@ private fun PlaylistRow(
         },
         leadingContent = { Icon(Icons.Default.QueueMusic, contentDescription = null) },
         trailingContent = {
-            if (isSelectionMode) {
-                Checkbox(
-                    checked = isSelected,
-                    onCheckedChange = null,
-                )
-            } else {
-                Row {
-                    IconButton(onClick = onToggleFavorite) {
-                        if (item.isFavorite) {
-                            Icon(
-                                Icons.Default.Bookmark,
-                                contentDescription = "Убрать из избранного",
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                        } else {
-                            Icon(
-                                Icons.Default.BookmarkBorder,
-                                contentDescription = "Добавить в избранное",
-                            )
-                        }
+            Row {
+                IconButton(onClick = onToggleFavorite) {
+                    if (item.isFavorite) {
+                        Icon(
+                            Icons.Default.Bookmark,
+                            contentDescription = "Убрать из избранного",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.BookmarkBorder,
+                            contentDescription = "Добавить в избранное",
+                        )
                     }
-                    IconButton(onClick = onDelete) {
-                        Icon(Icons.Default.Delete, contentDescription = "Удалить")
-                    }
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Удалить")
                 }
             }
         },
@@ -349,13 +217,6 @@ private fun pluralTracks(count: Int): String = when {
     count % 10 == 1 -> "$count трек"
     count % 10 in 2..4 -> "$count трека"
     else -> "$count треков"
-}
-
-private fun pluralPlaylists(count: Int): String = when {
-    count % 100 in 11..19 -> "$count плейлистов"
-    count % 10 == 1 -> "$count плейлист"
-    count % 10 in 2..4 -> "$count плейлиста"
-    else -> "$count плейлистов"
 }
 
 @Composable
