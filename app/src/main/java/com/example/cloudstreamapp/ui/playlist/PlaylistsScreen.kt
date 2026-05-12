@@ -61,6 +61,7 @@ fun PlaylistsScreen(
     val pendingDeleteId by viewModel.pendingDeleteId.collectAsState()
     val importedPlaylistId by viewModel.importedPlaylistId.collectAsState()
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
+    var showImportDialog by rememberSaveable { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -68,18 +69,10 @@ fun PlaylistsScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { viewModel.importFromUri(it) } }
 
-    // Navigate to the newly imported playlist
     LaunchedEffect(importedPlaylistId) {
         importedPlaylistId?.let {
             viewModel.consumeImportedPlaylistId()
             onPlaylistClick(it)
-        }
-    }
-
-    // Trigger the file picker when the ViewModel requests it
-    LaunchedEffect(viewModel) {
-        viewModel.importTrigger.collect {
-            openFileLauncher.launch(arrayOf("application/json", "*/*"))
         }
     }
 
@@ -95,7 +88,7 @@ fun PlaylistsScreen(
             TopAppBar(
                 title = { Text("Плейлисты") },
                 actions = {
-                    IconButton(onClick = { viewModel.requestImport() }) {
+                    IconButton(onClick = { showImportDialog = true }) {
                         Icon(Icons.Default.FolderOpen, contentDescription = "Импортировать плейлист")
                     }
                     IconButton(onClick = onFavoritesClick) {
@@ -157,6 +150,25 @@ fun PlaylistsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.cancelDeletePlaylist() }) { Text("Отмена") }
+            },
+        )
+    }
+
+    if (showImportDialog) {
+        AlertDialog(
+            onDismissRequest = { showImportDialog = false },
+            title = { Text("Импорт плейлиста") },
+            text = { Text("Выберите JSON-файл с сохранённым плейлистом.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showImportDialog = false
+                    openFileLauncher.launch(arrayOf("application/json", "*/*"))
+                }) {
+                    Text("Выбрать файл")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportDialog = false }) { Text("Отмена") }
             },
         )
     }

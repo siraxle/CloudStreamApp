@@ -15,8 +15,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -114,20 +114,12 @@ class PlaylistsViewModel @Inject constructor(
 
     // --- Import ---
 
-    // Triggers the OpenDocument file picker in the Composable
-    private val _importTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val importTrigger: SharedFlow<Unit> = _importTrigger.asSharedFlow()
-
     // Non-null after a successful import; consumed by the Composable to navigate
     private val _importedPlaylistId = MutableStateFlow<String?>(null)
     val importedPlaylistId: StateFlow<String?> = _importedPlaylistId.asStateFlow()
 
     private val _importError = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val importError: SharedFlow<Unit> = _importError.asSharedFlow()
-
-    fun requestImport() {
-        _importTrigger.tryEmit(Unit)
-    }
 
     fun importFromUri(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
