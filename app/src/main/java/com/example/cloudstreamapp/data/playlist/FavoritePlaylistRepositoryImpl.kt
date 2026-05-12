@@ -15,6 +15,7 @@ import com.example.cloudstreamapp.domain.model.FavoritePlaylist
 import com.example.cloudstreamapp.domain.model.FavoriteTrack
 import com.example.cloudstreamapp.domain.port.FavoritePlaylistRepositoryPort
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.util.UUID
 import javax.inject.Inject
@@ -111,6 +112,14 @@ class FavoritePlaylistRepositoryImpl @Inject constructor(
      */
     suspend fun restoreFavorite(favoriteId: String): String? {
         val favoriteWithTracks = favoriteDao.getById(favoriteId) ?: return null
+
+        // If a playlist with the same name and tracks already exists, reuse it
+        val existingId = findDuplicateInMainList(favoriteWithTracks)
+        if (existingId != null) {
+            favoriteDao.updateOriginalId(favoriteId, existingId)
+            return existingId
+        }
+
         val newPlaylistId = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
 
@@ -160,6 +169,21 @@ class FavoritePlaylistRepositoryImpl @Inject constructor(
         }
 
         return newPlaylistId
+    }
+
+    private suspend fun findDuplicateInMainList(favoriteWithTracks: FavoritePlaylistWithTracks): String? {
+        val incomingKeys = favoriteWithTracks.tracks
+            .map { "${it.sourceId}|${it.relativePath}" }.toSet()
+        val allPlaylists = playlistDao.getAll().first()
+        for (playlist in allPlaylists) {
+            if (playlist.name != favoriteWithTracks.playlist.name) continue
+            val items = playlistDao.getItemsOnce(playlist.id)
+            val existingKeys = items.mapNotNull { item ->
+                metadataDao.getById(item.mediaId)?.let { "${it.sourceId}|${it.path}" }
+            }.toSet()
+            if (existingKeys == incomingKeys) return playlist.id
+        }
+        return null
     }
 
     // --- Mappers ---
