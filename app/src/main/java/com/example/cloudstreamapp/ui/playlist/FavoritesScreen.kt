@@ -1,5 +1,7 @@
 package com.example.cloudstreamapp.ui.playlist
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,6 +14,7 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -19,6 +22,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -26,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -42,6 +48,12 @@ fun FavoritesScreen(
     val pendingDeleteId by viewModel.pendingDeleteId.collectAsState()
     val restoredPlaylistId by viewModel.restoredPlaylistId.collectAsState()
 
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    val saveFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri -> uri?.let { viewModel.exportToUri(it) } }
+
     LaunchedEffect(restoredPlaylistId) {
         restoredPlaylistId?.let {
             viewModel.consumeRestoredPlaylistId()
@@ -49,7 +61,24 @@ fun FavoritesScreen(
         }
     }
 
+    LaunchedEffect(viewModel) {
+        viewModel.exportFileSuggestion.collect { filename ->
+            saveFileLauncher.launch(filename)
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.exportResult.collect { result ->
+            val message = when (result) {
+                FavoritesViewModel.ExportResult.Success -> "Плейлист экспортирован"
+                FavoritesViewModel.ExportResult.Error -> "Ошибка при экспорте"
+            }
+            snackbarHostState.showSnackbar(message)
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Избранные плейлисты") },
@@ -87,6 +116,7 @@ fun FavoritesScreen(
                             onNavigate = {
                                 item.favorite.originalPlaylistId?.let { onNavigateToPlaylist(it) }
                             },
+                            onExport = { viewModel.requestExport(item.favorite.id) },
                             onDelete = { viewModel.requestDelete(item.favorite.id) },
                         )
                     }
@@ -118,6 +148,7 @@ private fun FavoriteRow(
     item: FavoritesViewModel.FavoriteUiItem,
     onRestore: () -> Unit,
     onNavigate: () -> Unit,
+    onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
     ListItem(
@@ -146,9 +177,7 @@ private fun FavoriteRow(
         trailingContent = {
             Row {
                 if (item.isInMainList) {
-                    TextButton(onClick = onNavigate) {
-                        Text("Открыть")
-                    }
+                    TextButton(onClick = onNavigate) { Text("Открыть") }
                 } else {
                     IconButton(onClick = onRestore) {
                         Icon(
@@ -157,6 +186,9 @@ private fun FavoriteRow(
                             tint = MaterialTheme.colorScheme.primary,
                         )
                     }
+                }
+                IconButton(onClick = onExport) {
+                    Icon(Icons.Default.Share, contentDescription = "Экспортировать")
                 }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = "Удалить из избранного")
