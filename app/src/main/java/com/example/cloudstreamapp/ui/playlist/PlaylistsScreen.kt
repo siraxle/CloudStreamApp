@@ -1,5 +1,7 @@
 package com.example.cloudstreamapp.ui.playlist
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +19,7 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Downloading
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material3.AlertDialog
@@ -28,13 +31,17 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -52,13 +59,45 @@ fun PlaylistsScreen(
 ) {
     val playlists by viewModel.playlists.collectAsState()
     val pendingDeleteId by viewModel.pendingDeleteId.collectAsState()
+    val importedPlaylistId by viewModel.importedPlaylistId.collectAsState()
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    val openFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { viewModel.importFromUri(it) } }
+
+    // Navigate to the newly imported playlist
+    LaunchedEffect(importedPlaylistId) {
+        importedPlaylistId?.let {
+            viewModel.consumeImportedPlaylistId()
+            onPlaylistClick(it)
+        }
+    }
+
+    // Trigger the file picker when the ViewModel requests it
+    LaunchedEffect(viewModel) {
+        viewModel.importTrigger.collect {
+            openFileLauncher.launch(arrayOf("application/json", "*/*"))
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.importError.collect {
+            snackbarHostState.showSnackbar("Не удалось импортировать плейлист. Проверьте файл.")
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Плейлисты") },
                 actions = {
+                    IconButton(onClick = { viewModel.requestImport() }) {
+                        Icon(Icons.Default.FolderOpen, contentDescription = "Импортировать плейлист")
+                    }
                     IconButton(onClick = onFavoritesClick) {
                         Icon(Icons.Default.Bookmarks, contentDescription = "Избранные плейлисты")
                     }

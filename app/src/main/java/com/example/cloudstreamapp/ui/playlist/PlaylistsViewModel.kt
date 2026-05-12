@@ -2,14 +2,23 @@ package com.example.cloudstreamapp.ui.playlist
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.net.Uri
+import com.example.cloudstreamapp.core.playlist.PlaylistImportExportManager
 import com.example.cloudstreamapp.data.playlist.FavoritePlaylistRepositoryImpl
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
+import com.example.cloudstreamapp.domain.model.CloudItem
+import com.example.cloudstreamapp.domain.model.CloudPath
+import com.example.cloudstreamapp.domain.model.CloudType
 import com.example.cloudstreamapp.domain.model.Playlist
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
@@ -24,6 +33,7 @@ import javax.inject.Inject
 class PlaylistsViewModel @Inject constructor(
     private val repo: PlaylistRepositoryImpl,
     private val favoriteRepo: FavoritePlaylistRepositoryImpl,
+    private val importExportManager: PlaylistImportExportManager,
 ) : ViewModel() {
 
     data class PlaylistUiItem(
@@ -100,5 +110,67 @@ class PlaylistsViewModel @Inject constructor(
 
     fun cancelDeletePlaylist() {
         _pendingDeleteId.value = null
+    }
+
+    // --- Import ---
+
+    // Triggers the OpenDocument file picker in the Composable
+    private val _importTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val importTrigger: SharedFlow<Unit> = _importTrigger.asSharedFlow()
+
+    // Non-null after a successful import; consumed by the Composable to navigate
+    private val _importedPlaylistId = MutableStateFlow<String?>(null)
+    val importedPlaylistId: StateFlow<String?> = _importedPlaylistId.asStateFlow()
+
+    private val _importError = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val importError: SharedFlow<Unit> = _importError.asSharedFlow()
+
+    fun requestImport() {
+        _importTrigger.tryEmit(Unit)
+    }
+
+    fun importFromUri(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val data = importExportManager.parseFromUri(uri) ?: run {
+                _importError.tryEmit(Unit)
+                return@launch
+            }
+            runCatching {
+                val newPlaylistId = UUID.randomUUID().toString()
+                val now = System.currentTimeMillis()
+                repo.create(
+                    Playlist(
+                        id = newPlaylistId,
+                        name = data.name,
+                        coverPath = null,
+                        createdAt = now,
+                        updatedAt = now,
+                    )
+                )
+                for (track in data.tracks) {
+                    val cloudType = runCatching { CloudType.valueOf(track.cloudType) }
+                        .getOrDefault(CloudType.HTTP)
+                    // Reuse existing mediaId if this path is already in the DB
+                    val existingId = repo.findMetadataId(track.sourceId, track.relativePath)
+                    val mediaId = existingId ?: UUID.randomUUID().toString()
+                    val cloudItem = CloudItem(
+                        id = mediaId,
+                        name = track.name,
+                        path = CloudPath(track.sourceId, track.relativePath, cloudType),
+                        type = CloudItem.ItemType.FILE,
+                        sizeBytes = track.sizeBytes,
+                        mimeType = track.mimeType,
+                    )
+                    repo.saveMediaAndAddToPlaylist(cloudItem, newPlaylistId)
+                }
+                _importedPlaylistId.value = newPlaylistId
+            }.onFailure {
+                _importError.tryEmit(Unit)
+            }
+        }
+    }
+
+    fun consumeImportedPlaylistId() {
+        _importedPlaylistId.value = null
     }
 }

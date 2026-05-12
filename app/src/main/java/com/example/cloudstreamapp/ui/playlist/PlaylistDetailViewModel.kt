@@ -9,9 +9,11 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
+import com.example.cloudstreamapp.core.playlist.PlaylistImportExportManager
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.CacheStatus
 import com.example.cloudstreamapp.domain.model.CloudItem
+import com.example.cloudstreamapp.domain.model.PlaylistExportData
 import com.example.cloudstreamapp.domain.model.PlaylistItem
 import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import com.example.cloudstreamapp.domain.usecase.GetStreamUrlUseCase
@@ -46,6 +48,7 @@ class PlaylistDetailViewModel @Inject constructor(
     private val settingsRepo: SettingsRepositoryPort,
     private val getStreamUrl: GetStreamUrlUseCase,
     private val okHttpClient: OkHttpClient,
+    private val importExportManager: PlaylistImportExportManager,
 ) : ViewModel() {
 
     private val playlistId: String = checkNotNull(savedStateHandle["playlistId"])
@@ -61,6 +64,18 @@ class PlaylistDetailViewModel @Inject constructor(
     sealed class DownloadError {
         object CacheLimitReached : DownloadError()
     }
+
+    sealed class ExportResult {
+        object Success : ExportResult()
+        object Error : ExportResult()
+    }
+
+    // Emits the suggested filename to trigger the system file-save dialog in the Composable
+    private val _exportFileSuggestion = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val exportFileSuggestion: SharedFlow<String> = _exportFileSuggestion.asSharedFlow()
+
+    private val _exportResult = MutableSharedFlow<ExportResult>(extraBufferCapacity = 1)
+    val exportResult: SharedFlow<ExportResult> = _exportResult.asSharedFlow()
 
     // Per-file download state: mediaId -> state (live, resets on new session)
     private val _itemStates = MutableStateFlow<Map<String, ItemDownloadState>>(emptyMap())
@@ -231,6 +246,42 @@ class PlaylistDetailViewModel @Inject constructor(
 
     fun cancelRemoveTrack() {
         _pendingRemoveItemId.value = null
+    }
+
+    fun requestExport() {
+        val safeName = playlistName.value
+            .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+            .take(80)
+            .ifBlank { "playlist" }
+        _exportFileSuggestion.tryEmit("$safeName.json")
+    }
+
+    fun exportToUri(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val pairs = repo.getItemsWithMetadata(playlistId).first()
+                val exportData = PlaylistExportData(
+                    name = playlistName.value,
+                    exportedAt = System.currentTimeMillis(),
+                    tracks = pairs.mapNotNull { (_, cloudItem) ->
+                        cloudItem?.let { item ->
+                            PlaylistExportData.ExportTrack(
+                                name = item.name,
+                                sourceId = item.path.sourceId,
+                                relativePath = item.path.relativePath,
+                                cloudType = item.path.cloudType.name,
+                                sizeBytes = item.sizeBytes,
+                                mimeType = item.mimeType,
+                            )
+                        }
+                    },
+                )
+                importExportManager.writeToUri(uri, exportData)
+            }.fold(
+                onSuccess = { _exportResult.tryEmit(ExportResult.Success) },
+                onFailure = { _exportResult.tryEmit(ExportResult.Error) },
+            )
+        }
     }
 
     companion object {

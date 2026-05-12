@@ -1,5 +1,7 @@
 package com.example.cloudstreamapp.ui.playlist
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadForOffline
 import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.OfflinePin
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -63,6 +66,17 @@ fun PlaylistDetailScreen(
     val activeDownloads = downloadStates.values.count { it is PlaylistDetailViewModel.ItemDownloadState.InProgress }
 
     val snackbarHostState = remember { SnackbarHostState() }
+
+    val saveFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri -> uri?.let { viewModel.exportToUri(it) } }
+
+    LaunchedEffect(viewModel) {
+        viewModel.exportFileSuggestion.collect { filename ->
+            saveFileLauncher.launch(filename)
+        }
+    }
+
     LaunchedEffect(viewModel) {
         viewModel.downloadError.collect { error ->
             when (error) {
@@ -72,6 +86,16 @@ fun PlaylistDetailScreen(
                         duration = SnackbarDuration.Long,
                     )
             }
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.exportResult.collect { result ->
+            val message = when (result) {
+                PlaylistDetailViewModel.ExportResult.Success -> "Плейлист экспортирован"
+                PlaylistDetailViewModel.ExportResult.Error -> "Ошибка при экспорте"
+            }
+            snackbarHostState.showSnackbar(message)
         }
     }
 
@@ -102,6 +126,12 @@ fun PlaylistDetailScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { viewModel.requestExport() }) {
+                        Icon(
+                            Icons.Default.Share,
+                            contentDescription = "Экспортировать плейлист",
+                        )
+                    }
                     IconButton(onClick = { viewModel.triggerDownload() }) {
                         Icon(
                             Icons.Default.DownloadForOffline,
