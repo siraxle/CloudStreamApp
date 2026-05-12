@@ -2,6 +2,7 @@ package com.example.cloudstreamapp.ui.playlist
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.cloudstreamapp.data.playlist.FavoritePlaylistRepositoryImpl
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.Playlist
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -22,6 +23,7 @@ import javax.inject.Inject
 @HiltViewModel
 class PlaylistsViewModel @Inject constructor(
     private val repo: PlaylistRepositoryImpl,
+    private val favoriteRepo: FavoritePlaylistRepositoryImpl,
 ) : ViewModel() {
 
     data class PlaylistUiItem(
@@ -29,24 +31,33 @@ class PlaylistsViewModel @Inject constructor(
         val totalTracks: Int,
         val cachedTracks: Int,
         val downloadingTracks: Int,
+        val isFavorite: Boolean = false,
     )
 
+    private val favoriteOriginalIds: StateFlow<Set<String>> = favoriteRepo.getAll()
+        .map { favorites -> favorites.mapNotNull { it.originalPlaylistId }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
     @OptIn(ExperimentalCoroutinesApi::class)
-    val playlists: StateFlow<List<PlaylistUiItem>> = repo.getAll()
-        .flatMapLatest { playlists ->
-            if (playlists.isEmpty()) {
-                flowOf(emptyList())
-            } else {
-                combine(
-                    playlists.map { playlist ->
-                        repo.getItemCacheStats(playlist.id).map { (total, cached, downloading) ->
-                            PlaylistUiItem(playlist, total, cached, downloading)
+    val playlists: StateFlow<List<PlaylistUiItem>> = combine(
+        repo.getAll()
+            .flatMapLatest { playlists ->
+                if (playlists.isEmpty()) {
+                    flowOf(emptyList())
+                } else {
+                    combine(
+                        playlists.map { playlist ->
+                            repo.getItemCacheStats(playlist.id).map { (total, cached, downloading) ->
+                                PlaylistUiItem(playlist, total, cached, downloading)
+                            }
                         }
-                    }
-                ) { it.toList() }
-            }
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+                    ) { it.toList() }
+                }
+            },
+        favoriteOriginalIds,
+    ) { items, favIds ->
+        items.map { it.copy(isFavorite = it.playlist.id in favIds) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun createPlaylist(name: String) {
         viewModelScope.launch {
@@ -59,6 +70,17 @@ class PlaylistsViewModel @Inject constructor(
                     updatedAt = System.currentTimeMillis(),
                 )
             )
+        }
+    }
+
+    fun toggleFavorite(playlistId: String) {
+        viewModelScope.launch {
+            val existing = favoriteRepo.findByOriginalId(playlistId)
+            if (existing != null) {
+                favoriteRepo.delete(existing.id)
+            } else {
+                favoriteRepo.snapshotPlaylist(playlistId)
+            }
         }
     }
 

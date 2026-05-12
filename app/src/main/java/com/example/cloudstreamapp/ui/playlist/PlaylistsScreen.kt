@@ -12,6 +12,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.OfflinePin
@@ -44,6 +47,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 @Composable
 fun PlaylistsScreen(
     onPlaylistClick: (String) -> Unit = {},
+    onFavoritesClick: () -> Unit = {},
     viewModel: PlaylistsViewModel = hiltViewModel(),
 ) {
     val playlists by viewModel.playlists.collectAsState()
@@ -51,7 +55,16 @@ fun PlaylistsScreen(
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Плейлисты") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Плейлисты") },
+                actions = {
+                    IconButton(onClick = onFavoritesClick) {
+                        Icon(Icons.Default.Bookmarks, contentDescription = "Избранные плейлисты")
+                    }
+                },
+            )
+        },
         floatingActionButton = {
             FloatingActionButton(onClick = { showCreateDialog = true }) {
                 Icon(Icons.Default.Add, contentDescription = "Новый плейлист")
@@ -75,6 +88,7 @@ fun PlaylistsScreen(
                             item = item,
                             onClick = { onPlaylistClick(item.playlist.id) },
                             onDelete = { viewModel.requestDeletePlaylist(item.playlist.id) },
+                            onToggleFavorite = { viewModel.toggleFavorite(item.playlist.id) },
                         )
                     }
                 }
@@ -82,18 +96,20 @@ fun PlaylistsScreen(
         }
     }
 
-    // Confirmation dialog shown when user taps delete on a playlist
     if (pendingDeleteId != null) {
-        val name = playlists.firstOrNull { it.playlist.id == pendingDeleteId }?.playlist?.name ?: ""
+        val item = playlists.firstOrNull { it.playlist.id == pendingDeleteId }
+        val name = item?.playlist?.name ?: ""
         AlertDialog(
             onDismissRequest = { viewModel.cancelDeletePlaylist() },
             title = { Text("Удалить плейлист?") },
             text = {
-                Text(
-                    "«$name» будет удалён вместе со всеми треками. " +
-                        "Скачанные треки, не используемые в других плейлистах, " +
-                        "также будут удалены с устройства."
-                )
+                val base = "«$name» будет удалён вместе со всеми треками. " +
+                    "Скачанные треки, не используемые в других плейлистах, " +
+                    "также будут удалены с устройства."
+                val favoriteHint = if (item?.isFavorite == true)
+                    "\n\nПлейлист добавлен в избранное — вы сможете восстановить его оттуда."
+                else ""
+                Text(base + favoriteHint)
             },
             confirmButton = {
                 TextButton(onClick = { viewModel.confirmDeletePlaylist() }) {
@@ -122,6 +138,7 @@ private fun PlaylistRow(
     item: PlaylistsViewModel.PlaylistUiItem,
     onClick: () -> Unit,
     onDelete: () -> Unit,
+    onToggleFavorite: () -> Unit,
 ) {
     ListItem(
         headlineContent = { Text(item.playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -165,8 +182,24 @@ private fun PlaylistRow(
         },
         leadingContent = { Icon(Icons.Default.QueueMusic, contentDescription = null) },
         trailingContent = {
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, contentDescription = "Удалить")
+            Row {
+                IconButton(onClick = onToggleFavorite) {
+                    if (item.isFavorite) {
+                        Icon(
+                            Icons.Default.Bookmark,
+                            contentDescription = "Убрать из избранного",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.BookmarkBorder,
+                            contentDescription = "Добавить в избранное",
+                        )
+                    }
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Удалить")
+                }
             }
         },
         modifier = Modifier.clickable(onClick = onClick),

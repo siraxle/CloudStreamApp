@@ -11,6 +11,7 @@ import com.example.cloudstreamapp.ui.browser.BrowserScreen
 import com.example.cloudstreamapp.ui.gallery.ImageGalleryScreen
 import com.example.cloudstreamapp.ui.home.HomeScreen
 import com.example.cloudstreamapp.ui.player.PlayerScreen
+import com.example.cloudstreamapp.ui.playlist.FavoritesScreen
 import com.example.cloudstreamapp.ui.playlist.PlaylistDetailScreen
 import com.example.cloudstreamapp.ui.playlist.PlaylistsScreen
 import com.example.cloudstreamapp.ui.settings.SettingsScreen
@@ -118,7 +119,19 @@ fun NavGraph(
             PlaylistsScreen(
                 onPlaylistClick = { id ->
                     navController.navigate(Screen.PlaylistDetail.createRoute(id))
-                }
+                },
+                onFavoritesClick = {
+                    navController.navigate(Screen.FavoritePlaylists.route)
+                },
+            )
+        }
+
+        composable(Screen.FavoritePlaylists.route) {
+            FavoritesScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToPlaylist = { id ->
+                    navController.navigate(Screen.PlaylistDetail.createRoute(id))
+                },
             )
         }
 

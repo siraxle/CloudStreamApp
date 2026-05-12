@@ -2,6 +2,7 @@ package com.example.cloudstreamapp.core.database
 
 import android.content.Context
 import androidx.room.Room
+import com.example.cloudstreamapp.core.database.dao.FavoritePlaylistDao
 import com.example.cloudstreamapp.core.database.dao.FolderCacheDao
 import com.example.cloudstreamapp.core.database.dao.MediaMetadataDao
 import com.example.cloudstreamapp.core.database.dao.PlayHistoryDao
@@ -22,7 +23,7 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, "cloudstream.db")
-            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
             .build()
 
     @Provides
@@ -39,4 +40,7 @@ object DatabaseModule {
 
     @Provides
     fun providePlayHistoryDao(db: AppDatabase): PlayHistoryDao = db.playHistoryDao()
+
+    @Provides
+    fun provideFavoritePlaylistDao(db: AppDatabase): FavoritePlaylistDao = db.favoritePlaylistDao()
 }
