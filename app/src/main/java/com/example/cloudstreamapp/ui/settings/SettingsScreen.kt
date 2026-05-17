@@ -39,6 +39,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
+import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 
 private val CACHE_PRESETS = listOf(
     500L * 1024 * 1024 to "500 MB",
@@ -252,6 +253,22 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                     Button(onClick = { viewModel.clearImageCache() }) { Text("Очистить") }
                 },
             )
+
+            SectionHeader("Торрент-источники")
+
+            TorrentSource.entries.forEach { source ->
+                val enabledFlow = remember(source) { viewModel.torrentSourceEnabled(source) }
+                val enabled by enabledFlow.collectAsState()
+                ListItem(
+                    headlineContent = { Text(source.displayName) },
+                    trailingContent = {
+                        Switch(
+                            checked = enabled,
+                            onCheckedChange = { viewModel.setTorrentSourceEnabled(source, it) },
+                        )
+                    },
+                )
+            }
         }
     }
 }

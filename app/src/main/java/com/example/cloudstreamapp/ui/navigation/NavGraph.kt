@@ -15,6 +15,7 @@ import com.example.cloudstreamapp.ui.playlist.FavoritesScreen
 import com.example.cloudstreamapp.ui.playlist.PlaylistDetailScreen
 import com.example.cloudstreamapp.ui.playlist.PlaylistsScreen
 import com.example.cloudstreamapp.ui.settings.SettingsScreen
+import com.example.cloudstreamapp.ui.torrent.TorrentBrowserScreen
 
 @Composable
 fun NavGraph(
@@ -167,6 +168,22 @@ fun NavGraph(
 
         composable(Screen.Settings.route) {
             SettingsScreen()
+        }
+
+        composable(Screen.TorrentBrowser.route) {
+            TorrentBrowserScreen(
+                onPlayFile = { item, magnetUri, infoHash ->
+                    // Use FolderPlayer mode: auto-queues all files in the torrent
+                    navController.navigate(
+                        Screen.FolderPlayer.createRoute(
+                            cloudType  = "TORRENT",
+                            sourceUrl  = magnetUri,
+                            folderPath = infoHash,
+                            mediaId    = item.id,
+                        )
+                    ) { launchSingleTop = true }
+                },
+            )
         }
     }
 }

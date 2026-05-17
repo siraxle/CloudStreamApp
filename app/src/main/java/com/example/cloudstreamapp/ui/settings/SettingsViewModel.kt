@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.cloudstreamapp.core.cache.ImageCacheManager
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
+import com.example.cloudstreamapp.data.torrent.provider.TorrentProviderConfig
+import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +23,7 @@ class SettingsViewModel @Inject constructor(
     private val cacheManager: MediaCacheManager,
     private val imageCacheManager: ImageCacheManager,
     private val playlistRepo: PlaylistRepositoryImpl,
+    private val torrentProviderConfig: TorrentProviderConfig,
 ) : ViewModel() {
 
     val cacheLimitBytes: StateFlow<Long> = settings.cacheLimitBytes
@@ -65,5 +68,13 @@ class SettingsViewModel @Inject constructor(
 
     fun clearImageCache() {
         imageCacheManager.clearAll()
+    }
+
+    fun torrentSourceEnabled(source: TorrentSource): StateFlow<Boolean> =
+        torrentProviderConfig.isEnabled(source)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setTorrentSourceEnabled(source: TorrentSource, enabled: Boolean) {
+        viewModelScope.launch { torrentProviderConfig.setEnabled(source, enabled) }
     }
 }

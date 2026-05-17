@@ -6,5 +6,6 @@ enum class CloudType {
     DROPBOX,
     ONEDRIVE,
     HTTP,
-    WEBDAV
+    WEBDAV,
+    TORRENT,
 }

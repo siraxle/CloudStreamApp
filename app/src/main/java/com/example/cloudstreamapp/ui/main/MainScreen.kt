@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -41,6 +42,7 @@ fun MainScreen() {
     val navItems = listOf(
         NavItem(Screen.Home.route, "Браузер", Icons.Default.Folder),
         NavItem(Screen.Playlists.route, "Плейлисты", Icons.Default.QueueMusic),
+        NavItem(Screen.TorrentBrowser.route, "Торренты", Icons.Default.CloudDownload),
         NavItem(PLAYER_NAV_ROUTE, "Плеер", Icons.Default.PlayArrow),
         NavItem(Screen.Settings.route, "Настройки", Icons.Default.Settings),
     )

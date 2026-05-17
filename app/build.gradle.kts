@@ -43,6 +43,21 @@ android {
         arg("room.schemaLocation", "$projectDir/schemas")
         arg("room.incremental", "true")
     }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
+    }
+
+    packaging {
+        jniLibs {
+            pickFirsts.add("**/*.so")
+        }
+    }
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {
@@ -108,6 +123,11 @@ dependencies {
 
     // Parsing
     implementation(libs.jsoup)
+
+    // Torrent streaming
+    implementation(libs.libtorrent4j.android.arm)
+    implementation(libs.libtorrent4j.android.arm64)
+    implementation(libs.nanohttpd)
 
     // Testing
     testImplementation(libs.junit)
