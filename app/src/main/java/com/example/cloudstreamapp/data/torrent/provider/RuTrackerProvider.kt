@@ -1,27 +1,30 @@
 package com.example.cloudstreamapp.data.torrent.provider
 
+import com.example.cloudstreamapp.data.torrent.auth.TorrentAuthStore
 import com.example.cloudstreamapp.domain.torrent.TorrentResult
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
+import java.nio.charset.Charset
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class RuTrackerProvider @Inject constructor(
-    private val okHttpClient: OkHttpClient
+    private val okHttpClient: OkHttpClient,
+    private val authStore: TorrentAuthStore,
 ) : TorrentSearchProvider {
 
     override val source: TorrentSource = TorrentSource.RUTRACKER
 
     private val baseUrl = "https://rutracker.org/forum"
-
-    // Cookie jar is handled by the shared OkHttpClient; we just need to POST once to get a session.
-    // RuTracker allows guest search without login, but requires a valid session cookie.
-    // We fetch the main page first (sets bb_session cookie), then POST the search form.
+    private val sessionMutex = Mutex()
+    private var sessionInitialized = false
 
     override suspend fun search(query: String, page: Int): List<TorrentResult> =
         withContext(Dispatchers.IO) {
@@ -54,13 +57,11 @@ class RuTrackerProvider @Inject constructor(
                 val seeders = row.selectFirst("td.seedmed b")?.text()?.toIntOrNull() ?: 0
                 val leechers = row.selectFirst("td.leechmed b")?.text()?.toIntOrNull() ?: 0
 
-                // Extract topic id for magnet construction: href is like viewtopic.php?t=12345
                 val topicId = Regex("t=(\\d+)").find(titleEl.attr("href"))?.groupValues?.get(1)
                     ?: return@mapNotNull null
-                // RuTracker magnet links require the topic page — store topic URL as magnetUri placeholder
                 TorrentResult(
                     name = name,
-                    magnetUri = topicUrl,   // resolved to real magnet by resolveMagnet()
+                    magnetUri = topicUrl,
                     infoHash = "",
                     sizeBytes = parseSizeBytes(sizeStr),
                     seeders = seeders,
@@ -83,17 +84,66 @@ class RuTrackerProvider @Inject constructor(
         Jsoup.parse(html).selectFirst("a.magnet-link")?.attr("href")
     }
 
-    private var sessionInitialized = false
+    /**
+     * Performs a full login to RuTracker. On success the OkHttpClient cookie jar
+     * will hold the session cookie for subsequent requests.
+     *
+     * RuTracker's charset is Windows-1251 — Cyrillic must be encoded in cp1251,
+     * not UTF-8, or the server won't recognise the credentials.
+     */
+    suspend fun login(username: String, password: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val cp1251 = Charset.forName("windows-1251")
+                val formBody = FormBody.Builder(cp1251)
+                    .add("login_username", username)
+                    .add("login_password", password)
+                    .add("login", "Вход")
+                    .build()
 
-    private fun ensureSession() {
-        if (sessionInitialized) return
-        runCatching {
-            val req = Request.Builder()
-                .url("$baseUrl/tracker.php")
-                .header("User-Agent", "Mozilla/5.0 (Android)")
-                .build()
-            okHttpClient.newCall(req).execute().close()
+                val request = Request.Builder()
+                    .url("$baseUrl/login.php")
+                    .post(formBody)
+                    .header("User-Agent", "Mozilla/5.0 (Android)")
+                    .header("Referer", "$baseUrl/login.php")
+                    .build()
+
+                okHttpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        error("Сервер вернул ${response.code}")
+                    }
+                    // After a successful login RuTracker redirects away from login.php.
+                    // If the final URL still points to login.php the credentials were wrong.
+                    val finalUrl = response.request.url.toString()
+                    if (finalUrl.contains("login.php")) {
+                        error("Неверное имя пользователя или пароль")
+                    }
+                }
+
+                sessionInitialized = true
+            }
         }
-        sessionInitialized = true
+
+    private suspend fun ensureSession() {
+        if (sessionInitialized) return
+        sessionMutex.withLock {
+            if (sessionInitialized) return
+            val credentials = authStore.getCredentials(TorrentSource.RUTRACKER)
+            if (credentials != null) {
+                val (u, p) = credentials
+                // Best-effort re-login on app restart; ignore failure (falls back to guest)
+                login(u, p)
+            } else {
+                // Guest session — RuTracker sets bb_session cookie on first visit
+                runCatching {
+                    val req = Request.Builder()
+                        .url("$baseUrl/tracker.php")
+                        .header("User-Agent", "Mozilla/5.0 (Android)")
+                        .build()
+                    okHttpClient.newCall(req).execute().close()
+                }
+            }
+            sessionInitialized = true
+        }
     }
 }

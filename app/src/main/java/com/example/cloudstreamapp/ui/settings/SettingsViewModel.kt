@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.cloudstreamapp.core.cache.ImageCacheManager
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
+import com.example.cloudstreamapp.data.torrent.auth.TorrentAuthStore
+import com.example.cloudstreamapp.data.torrent.provider.RuTrackerProvider
 import com.example.cloudstreamapp.data.torrent.provider.TorrentProviderConfig
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
@@ -13,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -24,6 +27,8 @@ class SettingsViewModel @Inject constructor(
     private val imageCacheManager: ImageCacheManager,
     private val playlistRepo: PlaylistRepositoryImpl,
     private val torrentProviderConfig: TorrentProviderConfig,
+    private val torrentAuthStore: TorrentAuthStore,
+    private val ruTrackerProvider: RuTrackerProvider,
 ) : ViewModel() {
 
     val cacheLimitBytes: StateFlow<Long> = settings.cacheLimitBytes
@@ -46,6 +51,19 @@ class SettingsViewModel @Inject constructor(
 
     val wifiOnlyPrefetch: StateFlow<Boolean> = settings.wifiOnlyPrefetch
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+
+    // --- Auth dialog state ---
+
+    private val _pendingAuthSource = MutableStateFlow<TorrentSource?>(null)
+    val pendingAuthSource: StateFlow<TorrentSource?> = _pendingAuthSource.asStateFlow()
+
+    private val _loginInProgress = MutableStateFlow(false)
+    val loginInProgress: StateFlow<Boolean> = _loginInProgress.asStateFlow()
+
+    private val _loginError = MutableStateFlow<String?>(null)
+    val loginError: StateFlow<String?> = _loginError.asStateFlow()
+
 
     fun setCacheLimit(bytes: Long) {
         viewModelScope.launch { settings.setCacheLimitBytes(bytes) }
@@ -70,11 +88,59 @@ class SettingsViewModel @Inject constructor(
         imageCacheManager.clearAll()
     }
 
+    // --- Torrent source management ---
+
     fun torrentSourceEnabled(source: TorrentSource): StateFlow<Boolean> =
         torrentProviderConfig.isEnabled(source)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    fun setTorrentSourceEnabled(source: TorrentSource, enabled: Boolean) {
-        viewModelScope.launch { torrentProviderConfig.setEnabled(source, enabled) }
+    fun isAuthenticated(source: TorrentSource): StateFlow<Boolean> =
+        torrentAuthStore.isAuthenticated(source)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun onTorrentSourceToggle(source: TorrentSource, enabled: Boolean) {
+        if (enabled && source.requiresAuth) {
+            viewModelScope.launch {
+                val alreadyAuthenticated = torrentAuthStore.isAuthenticated(source).first()
+                if (alreadyAuthenticated) {
+                    torrentProviderConfig.setEnabled(source, true)
+                } else {
+                    _pendingAuthSource.value = source
+                }
+            }
+        } else {
+            viewModelScope.launch { torrentProviderConfig.setEnabled(source, enabled) }
+        }
+    }
+
+    fun login(source: TorrentSource, username: String, password: String) {
+        _loginError.value = null
+        _loginInProgress.value = true
+        viewModelScope.launch {
+            val result = when (source) {
+                TorrentSource.RUTRACKER -> ruTrackerProvider.login(username, password)
+                else -> Result.failure(UnsupportedOperationException("Auth not supported for ${source.displayName}"))
+            }
+            _loginInProgress.value = false
+            if (result.isSuccess) {
+                torrentAuthStore.saveAuth(source, username, password)
+                torrentProviderConfig.setEnabled(source, true)
+                _pendingAuthSource.value = null
+            } else {
+                _loginError.value = result.exceptionOrNull()?.message ?: "Ошибка входа"
+            }
+        }
+    }
+
+    fun dismissAuthDialog() {
+        _pendingAuthSource.value = null
+        _loginError.value = null
+    }
+
+    fun logout(source: TorrentSource) {
+        viewModelScope.launch {
+            torrentAuthStore.clearAuth(source)
+            torrentProviderConfig.setEnabled(source, false)
+        }
     }
 }

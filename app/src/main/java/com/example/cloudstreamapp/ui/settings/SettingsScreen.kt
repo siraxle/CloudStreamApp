@@ -58,6 +58,19 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val tempUsedCacheBytes by viewModel.tempUsedCacheBytes.collectAsState()
     val wifiOnly by viewModel.wifiOnlyPrefetch.collectAsState()
     var showClearCacheDialog by remember { mutableStateOf(false) }
+    val pendingAuthSource by viewModel.pendingAuthSource.collectAsState()
+    val loginInProgress by viewModel.loginInProgress.collectAsState()
+    val loginError by viewModel.loginError.collectAsState()
+
+    pendingAuthSource?.let { source ->
+        TrackerAuthDialog(
+            source = source,
+            loginInProgress = loginInProgress,
+            loginError = loginError,
+            onLogin = { u, p -> viewModel.login(source, u, p) },
+            onDismiss = viewModel::dismissAuthDialog,
+        )
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner) {
@@ -259,18 +272,55 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             TorrentSource.entries.forEach { source ->
                 val enabledFlow = remember(source) { viewModel.torrentSourceEnabled(source) }
                 val enabled by enabledFlow.collectAsState()
-                ListItem(
-                    headlineContent = { Text(source.displayName) },
-                    trailingContent = {
-                        Switch(
-                            checked = enabled,
-                            onCheckedChange = { viewModel.setTorrentSourceEnabled(source, it) },
-                        )
-                    },
-                )
+
+                if (source.requiresAuth) {
+                    val authenticatedFlow = remember(source) { viewModel.isAuthenticated(source) }
+                    val authenticated by authenticatedFlow.collectAsState()
+                    AuthRequiredSourceItem(
+                        source = source,
+                        enabled = enabled,
+                        authenticated = authenticated,
+                        onToggle = { viewModel.onTorrentSourceToggle(source, it) },
+                        onLogout = { viewModel.logout(source) },
+                    )
+                } else {
+                    ListItem(
+                        headlineContent = { Text(source.displayName) },
+                        trailingContent = {
+                            Switch(
+                                checked = enabled,
+                                onCheckedChange = { viewModel.onTorrentSourceToggle(source, it) },
+                            )
+                        },
+                    )
+                }
             }
         }
     }
+}
+
+@Composable
+private fun AuthRequiredSourceItem(
+    source: TorrentSource,
+    enabled: Boolean,
+    authenticated: Boolean,
+    onToggle: (Boolean) -> Unit,
+    onLogout: () -> Unit,
+) {
+    ListItem(
+        headlineContent = { Text(source.displayName) },
+        supportingContent = {
+            Text(if (authenticated) "Авторизован" else "Требуется вход")
+        },
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (authenticated) {
+                    TextButton(onClick = onLogout) { Text("Выйти") }
+                }
+                Switch(checked = enabled, onCheckedChange = onToggle)
+            }
+        },
+    )
 }
 
 @Composable
