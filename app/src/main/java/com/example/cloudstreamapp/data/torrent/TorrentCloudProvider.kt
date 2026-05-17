@@ -25,7 +25,7 @@ class TorrentCloudProvider @Inject constructor(
     override val type: CloudType = CloudType.TORRENT
 
     override fun isSupported(url: String): Boolean =
-        url.startsWith("magnet:?") || url.startsWith("magnet:/?")
+        engine.isAvailable && (url.startsWith("magnet:?") || url.startsWith("magnet:/?"))
 
     /**
      * Resolves a magnet URI — adds the torrent to the engine, waits for metadata,

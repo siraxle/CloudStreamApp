@@ -46,7 +46,9 @@ android {
 
     splits {
         abi {
-            isEnable = true
+            // Disabled for debug — produces one fat APK with all ABIs for easier dev/install.
+            // Re-enable (isEnable = true) for release to produce per-ABI APKs for Play Store.
+            isEnable = false
             reset()
             include("arm64-v8a", "armeabi-v7a", "x86_64")
             isUniversalApk = true
@@ -124,9 +126,10 @@ dependencies {
     // Parsing
     implementation(libs.jsoup)
 
-    // Torrent streaming
+    // Torrent streaming — one artifact per ABI so the fat debug APK covers all devices/emulators
     implementation(libs.libtorrent4j.android.arm)
     implementation(libs.libtorrent4j.android.arm64)
+    implementation(libs.libtorrent4j.android.x8664)
     implementation(libs.nanohttpd)
 
     // Testing

@@ -49,7 +49,16 @@ class LibtorrentEngine @Inject constructor(
 
     val savePath: File = File(context.cacheDir, "torrents").also { it.mkdirs() }
 
-    private val session = SessionManager()
+    // Null when the native library is missing (wrong ABI / emulator without x86_64 .so).
+    private val session: SessionManager? = try {
+        SessionManager()
+    } catch (e: LinkageError) {
+        Log.e(TAG, "libtorrent4j native library unavailable — torrent streaming disabled: ${e.message}")
+        null
+    }
+
+    /** False when the native library failed to load. TorrentCloudProvider checks this. */
+    val isAvailable: Boolean get() = session != null
 
     // Keyed by lowercase hex info hash
     private val states = ConcurrentHashMap<String, ActiveTorrent>()
@@ -58,7 +67,7 @@ class LibtorrentEngine @Inject constructor(
     private val pieceWaiters = ConcurrentHashMap<String, ConcurrentHashMap<Int, MutableList<Semaphore>>>()
 
     init {
-        session.addListener(object : AlertListener {
+        session?.addListener(object : AlertListener {
             override fun types(): IntArray = intArrayOf(
                 AlertType.PIECE_FINISHED.swig(),
                 AlertType.TORRENT_ERROR.swig(),
@@ -71,8 +80,8 @@ class LibtorrentEngine @Inject constructor(
                 }
             }
         })
-        session.start()
-        Log.i(TAG, "libtorrent session started, savePath=$savePath")
+        session?.start()
+        if (session != null) Log.i(TAG, "libtorrent session started, savePath=$savePath")
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -82,20 +91,25 @@ class LibtorrentEngine @Inject constructor(
      * starts sequential download, and returns the lowercase hex info hash.
      */
     suspend fun addMagnet(magnetUri: String): String = withContext(Dispatchers.IO) {
+        val s = session ?: throw IllegalStateException(
+            "libtorrent4j native library is not available on this device. " +
+            "Torrent streaming requires an arm64-v8a, armeabi-v7a, or x86_64 device."
+        )
+
         val infoHash = extractHexInfoHash(magnetUri)
             ?: throw IllegalArgumentException("No hex info hash found in magnet URI (xt=urn:btih:)")
 
         if (states.containsKey(infoHash)) return@withContext infoHash
 
         Log.d(TAG, "Fetching metadata for $infoHash …")
-        val metaBytes = session.fetchMagnet(magnetUri, METADATA_TIMEOUT_SEC, savePath)
+        val metaBytes = s.fetchMagnet(magnetUri, METADATA_TIMEOUT_SEC, savePath)
             ?: throw RuntimeException(
                 "Could not fetch metadata from peers within ${METADATA_TIMEOUT_SEC}s. " +
                 "Check the magnet link or try again."
             )
 
         val ti = TorrentInfo.bdecode(metaBytes)
-        session.download(ti, savePath)
+        s.download(ti, savePath)
 
         // Give libtorrent a moment to register the handle
         val handle = waitForHandle(ti.infoHash(), timeoutMs = 5_000L)
@@ -215,13 +229,13 @@ class LibtorrentEngine @Inject constructor(
     /** Stops downloading a torrent and cleans up all associated state. */
     fun removeTorrent(infoHash: String) {
         val state = states.remove(infoHash) ?: return
-        session.remove(state.handle)
+        session?.remove(state.handle)
         pieceWaiters.remove(infoHash)
         Log.d(TAG, "Removed torrent $infoHash")
     }
 
     fun shutdown() {
-        if (session.isRunning) {
+        if (session?.isRunning == true) {
             session.stop()
             Log.i(TAG, "libtorrent session stopped")
         }
@@ -245,9 +259,10 @@ class LibtorrentEngine @Inject constructor(
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun waitForHandle(sha1Hash: Sha1Hash, timeoutMs: Long): TorrentHandle? {
+        val s = session ?: return null
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
-            val h = session.find(sha1Hash)
+            val h = s.find(sha1Hash)
             if (h != null && h.isValid) return h
             Thread.sleep(100)
         }
