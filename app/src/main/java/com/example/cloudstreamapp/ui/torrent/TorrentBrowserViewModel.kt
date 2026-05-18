@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.cloudstreamapp.data.torrent.TorrentCloudProvider
 import com.example.cloudstreamapp.data.torrent.TorrentRepository
 import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadManager
+import com.example.cloudstreamapp.data.torrent.local.LocalTorrentRepository
 import com.example.cloudstreamapp.data.torrent.provider.ContentCategory
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 import com.example.cloudstreamapp.domain.model.CloudItem
@@ -31,10 +32,18 @@ class TorrentBrowserViewModel @Inject constructor(
     private val provider: TorrentCloudProvider,
     private val repository: TorrentRepository,
     private val downloadManager: TorrentDownloadManager,
+    private val localTorrentRepo: LocalTorrentRepository,
 ) : ViewModel() {
 
     companion object {
         private const val PAGE_SIZE = 30
+
+        // SavedStateHandle keys for restoring the open torrent across ViewModel recreation
+        private const val KEY_INFO_HASH = "fl_infoHash"
+        private const val KEY_MAGNET_URI = "fl_magnetUri"
+        private const val KEY_TORRENT_NAME = "fl_torrentName"
+        private const val KEY_FOLDER_PATH = "fl_folderPath"
+        private const val KEY_PAGE = "fl_page"
     }
 
     sealed class UiState {
@@ -79,7 +88,21 @@ class TorrentBrowserViewModel @Inject constructor(
     private var currentMagnetUri: String = ""
 
     init {
+        // Legacy: open from navigation argument (currently unused for this route)
         savedStateHandle.get<String>("magnetUri")?.let { openMagnet(Uri.decode(it)) }
+
+        // Restore the file list if the ViewModel was recreated while the user was viewing a torrent
+        // (happens when switching bottom-nav tabs: saveState/restoreState recreates the VM but
+        // preserves the SavedStateHandle bundle, so we can re-fetch the same folder page)
+        val restoredInfoHash = savedStateHandle.get<String>(KEY_INFO_HASH)
+        val restoredMagnet   = savedStateHandle.get<String>(KEY_MAGNET_URI)
+        val restoredName     = savedStateHandle.get<String>(KEY_TORRENT_NAME)
+        if (restoredInfoHash != null && restoredMagnet != null && restoredName != null) {
+            val restoredPath = savedStateHandle.get<String>(KEY_FOLDER_PATH) ?: ""
+            val restoredPage = savedStateHandle.get<Int>(KEY_PAGE) ?: 1
+            currentMagnetUri = restoredMagnet
+            loadFolderPage(restoredInfoHash, restoredMagnet, restoredName, restoredPath, restoredPage)
+        }
     }
 
     fun onQueryChanged(value: String) {
@@ -95,6 +118,7 @@ class TorrentBrowserViewModel @Inject constructor(
             return
         }
 
+        clearSavedFileListState()
         _uiState.value = UiState.Searching(q)
         viewModelScope.launch {
             val results = runCatching { repository.search(q, category = _category.value) }.getOrElse { emptyList() }
@@ -172,6 +196,10 @@ class TorrentBrowserViewModel @Inject constructor(
     fun navigateUp() {
         val current = _uiState.value as? UiState.FileList ?: return
         if (current.currentPath.isEmpty()) {
+            // Device-opened .torrent files (magnetUri = "torrent:$infoHash") have no search
+            // results to return to — stay on the file list so the torrent is not lost.
+            // The user can switch screens via the bottom nav; state is preserved in SavedStateHandle.
+            if (current.magnetUri.startsWith("torrent:")) return
             backToResults()
             return
         }
@@ -198,6 +226,7 @@ class TorrentBrowserViewModel @Inject constructor(
     }
 
     fun backToResults() {
+        clearSavedFileListState()
         if (fullResults.isNotEmpty()) {
             _uiState.value = UiState.SearchResults(
                 query = _query.value,
@@ -235,7 +264,22 @@ class TorrentBrowserViewModel @Inject constructor(
                 totalPages = totalPages,
                 totalCount = items.size,
             )
+            // Persist key parameters so the file list survives ViewModel recreation
+            // (e.g. when the user switches bottom-nav tabs and comes back)
+            savedStateHandle[KEY_INFO_HASH]    = infoHash
+            savedStateHandle[KEY_MAGNET_URI]   = magnetUri
+            savedStateHandle[KEY_TORRENT_NAME] = torrentName
+            savedStateHandle[KEY_FOLDER_PATH]  = folderPath
+            savedStateHandle[KEY_PAGE]         = page
         }
+    }
+
+    private fun clearSavedFileListState() {
+        savedStateHandle.remove<String>(KEY_INFO_HASH)
+        savedStateHandle.remove<String>(KEY_MAGNET_URI)
+        savedStateHandle.remove<String>(KEY_TORRENT_NAME)
+        savedStateHandle.remove<String>(KEY_FOLDER_PATH)
+        savedStateHandle.remove<Int>(KEY_PAGE)
     }
 
     private fun sourcesFromResults(results: List<TorrentResult>): List<TorrentSource> =
@@ -254,7 +298,32 @@ class TorrentBrowserViewModel @Inject constructor(
                         is CloudResult.FolderResult -> {
                             val infoHash = cloudResult.path.relativePath
                             currentMagnetUri = "torrent:$infoHash"
+                            localTorrentRepo.save(infoHash, torrentName, fileName, bytes)
                             loadFolderPage(infoHash, "torrent:$infoHash", torrentName, "", 1)
+                        }
+                        is CloudResult.Error -> _uiState.value = UiState.Error(cloudResult.message)
+                        else -> _uiState.value = UiState.Error("Unexpected result type")
+                    }
+                }
+                .onFailure { _uiState.value = UiState.Error(it.message ?: "Failed to open torrent file") }
+        }
+    }
+
+    /** Opens a previously saved local .torrent file by its infoHash. */
+    fun openLocalTorrent(infoHash: String) {
+        viewModelScope.launch {
+            val entry = localTorrentRepo.findByInfoHash(infoHash) ?: return@launch
+            val bytes = localTorrentRepo.getBytes(infoHash) ?: run {
+                _uiState.value = UiState.Error("Файл торрента не найден на устройстве")
+                return@launch
+            }
+            _uiState.value = UiState.ResolvingMagnet(entry.torrentName)
+            runCatching { provider.resolveTorrentBytes(bytes, entry.fileName) }
+                .onSuccess { cloudResult ->
+                    when (cloudResult) {
+                        is CloudResult.FolderResult -> {
+                            currentMagnetUri = "torrent:$infoHash"
+                            loadFolderPage(infoHash, "torrent:$infoHash", entry.torrentName, "", 1)
                         }
                         is CloudResult.Error -> _uiState.value = UiState.Error(cloudResult.message)
                         else -> _uiState.value = UiState.Error("Unexpected result type")

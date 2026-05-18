@@ -20,6 +20,8 @@ import com.example.cloudstreamapp.core.database.entity.PlaylistItemEntity
 import com.example.cloudstreamapp.core.database.entity.SourceEntity
 import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadDao
 import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadEntity
+import com.example.cloudstreamapp.data.torrent.local.LocalTorrentDao
+import com.example.cloudstreamapp.data.torrent.local.LocalTorrentEntity
 
 @Database(
     entities = [
@@ -32,8 +34,9 @@ import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadEntity
         FavoritePlaylistEntity::class,
         FavoriteTrackEntity::class,
         TorrentDownloadEntity::class,
+        LocalTorrentEntity::class,
     ],
-    version = 4,
+    version = 6,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -44,6 +47,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun playHistoryDao(): PlayHistoryDao
     abstract fun favoritePlaylistDao(): FavoritePlaylistDao
     abstract fun torrentDownloadDao(): TorrentDownloadDao
+    abstract fun localTorrentDao(): LocalTorrentDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -107,6 +111,29 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_torrent_downloads_infoHash ON torrent_downloads(infoHash)"
+                )
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE torrent_downloads ADD COLUMN folderPath TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_torrents (
+                        infoHash TEXT NOT NULL PRIMARY KEY,
+                        torrentName TEXT NOT NULL,
+                        fileName TEXT NOT NULL,
+                        addedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
                 )
             }
         }

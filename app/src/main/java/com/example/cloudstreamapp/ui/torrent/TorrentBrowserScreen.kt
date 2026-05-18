@@ -34,6 +34,8 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
@@ -72,8 +74,19 @@ import com.example.cloudstreamapp.domain.torrent.TorrentResult
 fun TorrentBrowserScreen(
     onPlayFile: (item: CloudItem, magnetUri: String, infoHash: String) -> Unit,
     onOpenDownloads: () -> Unit = {},
+    onOpenLocalTorrents: () -> Unit = {},
+    localTorrentToOpen: String = "",
+    onLocalTorrentConsumed: () -> Unit = {},
     viewModel: TorrentBrowserViewModel = hiltViewModel(),
 ) {
+    // Open a torrent forwarded from LocalTorrentsScreen
+    LaunchedEffect(localTorrentToOpen) {
+        if (localTorrentToOpen.isNotEmpty()) {
+            viewModel.openLocalTorrent(localTorrentToOpen)
+            onLocalTorrentConsumed()
+        }
+    }
+
     val uiState by viewModel.uiState.collectAsState()
     val query by viewModel.query.collectAsState()
     val category by viewModel.category.collectAsState()
@@ -92,7 +105,16 @@ fun TorrentBrowserScreen(
         viewModel.openTorrentFile(bytes, fileName)
     }
 
-    // Back inside folder hierarchy → navigate up; at root → back to results
+    // True when viewing a .torrent file opened from device storage at the torrent root.
+    // In this case there are no search results to return to, so back navigation must be
+    // absorbed (doing nothing) to prevent clearing the file list state.
+    val isDeviceTorrentAtRoot = (uiState as? TorrentBrowserViewModel.UiState.FileList)?.let {
+        it.currentPath.isEmpty() && it.magnetUri.startsWith("torrent:")
+    } ?: false
+
+    // Inside a subfolder → navigate up.
+    // At root of a search-result torrent → back to results.
+    // At root of a device-opened torrent → absorb without action (torrent stays in the list).
     BackHandler(enabled = uiState is TorrentBrowserViewModel.UiState.FileList) {
         viewModel.navigateUp()
     }
@@ -105,12 +127,28 @@ fun TorrentBrowserScreen(
                 title = { Text("Торренты") },
                 navigationIcon = {
                     if (uiState is TorrentBrowserViewModel.UiState.FileList) {
-                        IconButton(onClick = { viewModel.navigateUp() }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                        if (isDeviceTorrentAtRoot) {
+                            // Close button: explicitly exits the torrent view and returns to search.
+                            // System back is intentionally absorbed without action so the torrent
+                            // is not lost on accidental press; this button is the deliberate exit.
+                            IconButton(onClick = { viewModel.backToResults() }) {
+                                Icon(Icons.Default.Close, contentDescription = "Закрыть торрент")
+                            }
+                        } else {
+                            IconButton(onClick = { viewModel.navigateUp() }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                            }
                         }
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenLocalTorrents) {
+                        Icon(
+                            Icons.Default.Storage,
+                            contentDescription = "Мои торренты",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     IconButton(onClick = onOpenDownloads) {
                         Icon(
                             Icons.Default.OfflinePin,

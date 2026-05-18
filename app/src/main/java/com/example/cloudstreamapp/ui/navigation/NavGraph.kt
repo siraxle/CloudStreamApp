@@ -15,9 +15,12 @@ import com.example.cloudstreamapp.ui.playlist.FavoritesScreen
 import com.example.cloudstreamapp.ui.playlist.PlaylistDetailScreen
 import com.example.cloudstreamapp.ui.playlist.PlaylistsScreen
 import com.example.cloudstreamapp.ui.settings.SettingsScreen
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import com.example.cloudstreamapp.ui.torrent.TorrentBrowserScreen
 import com.example.cloudstreamapp.ui.torrent.downloads.TorrentDownloadsScreen
 import com.example.cloudstreamapp.ui.torrent.downloads.TorrentGroupDetailScreen
+import com.example.cloudstreamapp.ui.torrent.local.LocalTorrentsScreen
 
 @Composable
 fun NavGraph(
@@ -172,7 +175,12 @@ fun NavGraph(
             SettingsScreen()
         }
 
-        composable(Screen.TorrentBrowser.route) {
+        composable(Screen.TorrentBrowser.route) { backStackEntry ->
+            // Receive infoHash forwarded back from LocalTorrentsScreen
+            val localTorrentToOpen by backStackEntry.savedStateHandle
+                .getStateFlow("open_local_torrent_hash", "")
+                .collectAsState()
+
             TorrentBrowserScreen(
                 onPlayFile = { item, magnetUri, _ ->
                     navController.navigate(
@@ -187,6 +195,13 @@ fun NavGraph(
                 onOpenDownloads = {
                     navController.navigate(Screen.TorrentDownloads.route)
                 },
+                onOpenLocalTorrents = {
+                    navController.navigate(Screen.LocalTorrents.route)
+                },
+                localTorrentToOpen = localTorrentToOpen,
+                onLocalTorrentConsumed = {
+                    backStackEntry.savedStateHandle["open_local_torrent_hash"] = ""
+                },
             )
         }
 
@@ -198,6 +213,18 @@ fun NavGraph(
                 },
                 onOpenPlaylist = { playlistId ->
                     navController.navigate(Screen.PlaylistDetail.createRoute(playlistId))
+                },
+            )
+        }
+
+        composable(Screen.LocalTorrents.route) {
+            LocalTorrentsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenTorrent = { infoHash ->
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("open_local_torrent_hash", infoHash)
+                    navController.popBackStack()
                 },
             )
         }

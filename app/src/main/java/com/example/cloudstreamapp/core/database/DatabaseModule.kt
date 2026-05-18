@@ -9,6 +9,7 @@ import com.example.cloudstreamapp.core.database.dao.PlayHistoryDao
 import com.example.cloudstreamapp.core.database.dao.PlaylistDao
 import com.example.cloudstreamapp.core.database.dao.SourceDao
 import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadDao
+import com.example.cloudstreamapp.data.torrent.local.LocalTorrentDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -28,6 +29,8 @@ object DatabaseModule {
                 AppDatabase.MIGRATION_1_2,
                 AppDatabase.MIGRATION_2_3,
                 AppDatabase.MIGRATION_3_4,
+                AppDatabase.MIGRATION_4_5,
+                AppDatabase.MIGRATION_5_6,
             )
             .build()
 
@@ -51,4 +54,7 @@ object DatabaseModule {
 
     @Provides
     fun provideTorrentDownloadDao(db: AppDatabase): TorrentDownloadDao = db.torrentDownloadDao()
+
+    @Provides
+    fun provideLocalTorrentDao(db: AppDatabase): LocalTorrentDao = db.localTorrentDao()
 }
