@@ -191,7 +191,9 @@ class PlaylistRepositoryImpl @Inject constructor(
                 items.map { itemEntity ->
                     val meta = metadataDao.getById(itemEntity.mediaId)
                     val cloudItem = meta?.toCloudItem()?.let { item ->
-                        item.copy(cacheStatus = cacheManager.getCacheStatus(item.id, item.sizeBytes))
+                        val cacheStatus = if (meta.cloudType == CloudType.LOCAL.name) CacheStatus.CACHED
+                                          else cacheManager.getCacheStatus(item.id, item.sizeBytes)
+                        item.copy(cacheStatus = cacheStatus)
                     }
                     itemEntity.toDomain() to cloudItem
                 }
@@ -203,6 +205,9 @@ class PlaylistRepositoryImpl @Inject constructor(
         playlistDao.getItemsForPlaylist(playlistId)
             .map { items -> items.any { it.mediaId.startsWith("local:") } }
 
+    fun hasTorrentOrLocalTracks(playlistId: String): Flow<Boolean> =
+        playlistDao.countTorrentOrLocalItems(playlistId).map { it > 0 }
+
     fun getItemCacheStats(playlistId: String): Flow<Triple<Int, Int, Int>> =
         combine(
             playlistDao.getItemsForPlaylist(playlistId),
@@ -213,10 +218,14 @@ class PlaylistRepositoryImpl @Inject constructor(
                 for (itemEntity in items) {
                     total++
                     val meta = metadataDao.getById(itemEntity.mediaId)
-                    when (cacheManager.getCacheStatus(itemEntity.mediaId, meta?.sizeBytes)) {
-                        CacheStatus.CACHED -> cached++
-                        CacheStatus.PARTIAL -> partial++
-                        else -> {}
+                    if (meta?.cloudType == CloudType.LOCAL.name) {
+                        cached++
+                    } else {
+                        when (cacheManager.getCacheStatus(itemEntity.mediaId, meta?.sizeBytes)) {
+                            CacheStatus.CACHED -> cached++
+                            CacheStatus.PARTIAL -> partial++
+                            else -> {}
+                        }
                     }
                 }
                 Triple(total, cached, partial)

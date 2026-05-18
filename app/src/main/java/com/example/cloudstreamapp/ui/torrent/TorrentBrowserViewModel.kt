@@ -11,8 +11,11 @@ import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadManager
 import com.example.cloudstreamapp.data.torrent.local.LocalTorrentRepository
 import com.example.cloudstreamapp.data.torrent.provider.ContentCategory
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
+import com.example.cloudstreamapp.domain.model.CacheStatus
 import com.example.cloudstreamapp.domain.model.CloudItem
+import com.example.cloudstreamapp.domain.model.CloudPath
 import com.example.cloudstreamapp.domain.model.CloudResult
+import com.example.cloudstreamapp.domain.model.CloudType
 import com.example.cloudstreamapp.domain.model.Playlist
 import com.example.cloudstreamapp.domain.torrent.DownloadProgress
 import com.example.cloudstreamapp.domain.torrent.TorrentResult
@@ -353,14 +356,33 @@ class TorrentBrowserViewModel @Inject constructor(
     fun addFolderToPlaylist(folderItem: CloudItem) {
         val current = _uiState.value as? UiState.FileList ?: return
         viewModelScope.launch {
-            val audioFiles = withContext(Dispatchers.Default) {
+            val torrentItems = withContext(Dispatchers.Default) {
                 provider.listAllAudioFilesInFolder(
                     infoHash = current.infoHash,
                     folderPath = folderItem.path.relativePath,
                     magnetUri = current.magnetUri,
                 )
             }
-            if (audioFiles.isEmpty()) return@launch
+            if (torrentItems.isEmpty()) return@launch
+            // For each file already downloaded to disk, use a LOCAL CloudItem instead of TORRENT.
+            val audioFiles = torrentItems.map { item ->
+                val fileIndex = item.id.substringAfter(":").toIntOrNull() ?: return@map item
+                val progress = downloadManager.getProgress(current.infoHash, fileIndex)
+                if (progress is DownloadProgress.Done) {
+                    CloudItem(
+                        id = "local:${current.infoHash}:$fileIndex",
+                        name = item.name,
+                        path = CloudPath(
+                            sourceId = progress.localPath,
+                            relativePath = item.name,
+                            cloudType = CloudType.LOCAL,
+                        ),
+                        type = CloudItem.ItemType.FILE,
+                        sizeBytes = item.sizeBytes,
+                        cacheStatus = CacheStatus.CACHED,
+                    )
+                } else item
+            }
             val playlistName = folderItem.name
             val existing = playlistRepo.findByName(playlistName)
             if (existing != null) {

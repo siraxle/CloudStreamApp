@@ -51,4 +51,13 @@ interface PlaylistDao {
     // Count how many OTHER playlists reference this mediaId (used to decide cache eviction)
     @Query("SELECT COUNT(*) FROM playlist_items WHERE mediaId = :mediaId AND playlistId != :excludePlaylistId")
     suspend fun countOtherReferences(mediaId: String, excludePlaylistId: String): Int
+
+    // Count items whose metadata is cloudType TORRENT or LOCAL (joined with media_metadata).
+    // Used to determine whether delete-playlist dialog should show torrent-specific wording.
+    @Query("""
+        SELECT COUNT(*) FROM playlist_items pi
+        INNER JOIN media_metadata mm ON pi.mediaId = mm.id
+        WHERE pi.playlistId = :playlistId AND mm.cloudType IN ('TORRENT', 'LOCAL')
+    """)
+    fun countTorrentOrLocalItems(playlistId: String): Flow<Int>
 }

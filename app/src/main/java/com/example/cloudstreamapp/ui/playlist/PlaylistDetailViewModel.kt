@@ -157,7 +157,7 @@ class PlaylistDetailViewModel @Inject constructor(
             val pairs = repo.getItemsWithMetadata(playlistId).first()
             val toDownload = pairs
                 .mapNotNull { (_, cloudItem) -> cloudItem }
-                .filter { cacheManager.getCacheStatus(it.id, it.sizeBytes) != CacheStatus.CACHED }
+                .filter { it.cacheStatus != CacheStatus.CACHED }
 
             if (toDownload.isEmpty()) return@launch
 

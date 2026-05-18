@@ -82,9 +82,9 @@ class PlaylistsViewModel @Inject constructor(
                         playlists.map { playlist ->
                             combine(
                                 repo.getItemCacheStats(playlist.id),
-                                repo.hasLocalTracks(playlist.id),
-                            ) { (total, cached, downloading), hasLocal ->
-                                PlaylistUiItem(playlist, total, cached, downloading, isFromTorrent = hasLocal)
+                                repo.hasTorrentOrLocalTracks(playlist.id),
+                            ) { (total, cached, downloading), hasTorrentOrLocal ->
+                                PlaylistUiItem(playlist, total, cached, downloading, isFromTorrent = hasTorrentOrLocal)
                             }
                         }
                     ) { it.toList() }

@@ -50,6 +50,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.cloudstreamapp.core.utils.isAudioFile
 import com.example.cloudstreamapp.core.utils.isVideoFile
 import com.example.cloudstreamapp.domain.model.CacheStatus
+import com.example.cloudstreamapp.domain.model.CloudType
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -283,19 +284,17 @@ fun PlaylistDetailScreen(
 
     // Confirmation dialog for track removal
     if (pendingRemoveItemId != null) {
-        val trackName = tracks
-            .firstOrNull { it.item.id == pendingRemoveItemId }
-            ?.cloudItem?.name ?: "трек"
+        val pendingTrack = tracks.firstOrNull { it.item.id == pendingRemoveItemId }
+        val trackName = pendingTrack?.cloudItem?.name ?: "трек"
+        val isLocal = pendingTrack?.cloudItem?.path?.cloudType == CloudType.LOCAL
+        val dialogText = if (isLocal)
+            "«$trackName» будет удалён из плейлиста. Файл на устройстве останется."
+        else
+            "«$trackName» будет удалён из плейлиста. Если этот трек не используется в других плейлистах, он также будет удалён с устройства."
         AlertDialog(
             onDismissRequest = { viewModel.cancelRemoveTrack() },
             title = { Text("Удалить из плейлиста?") },
-            text = {
-                Text(
-                    "«$trackName» будет удалён из плейлиста. " +
-                        "Если этот трек не используется в других плейлистах, " +
-                        "он также будет удалён с устройства."
-                )
-            },
+            text = { Text(dialogText) },
             confirmButton = {
                 TextButton(onClick = { viewModel.confirmRemoveTrack() }) {
                     Text("Удалить", color = MaterialTheme.colorScheme.error)
