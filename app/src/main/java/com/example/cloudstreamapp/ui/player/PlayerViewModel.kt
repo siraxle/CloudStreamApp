@@ -154,6 +154,12 @@ class PlayerViewModel @Inject constructor(
 
     /** Resolve a playlist item: uses item.cacheStatus (set by getItemsWithMetadata). */
     private suspend fun resolvePlaylistItem(item: CloudItem): MediaItem? {
+        // LOCAL items are files on disk — always use file:// URI via LocalFileCloudProvider,
+        // never route to ExoPlayer SimpleCache (which has no data for these keys).
+        if (item.path.cloudType == CloudType.LOCAL) {
+            val url = runCatching { getStreamUrl(item) }.getOrNull() ?: return null
+            return buildOnlineMediaItem(item, url)
+        }
         if (item.cacheStatus == CacheStatus.CACHED) {
             return buildOfflineMediaItem(item.id, item.name, item.path.toExtrasBundle())
         }

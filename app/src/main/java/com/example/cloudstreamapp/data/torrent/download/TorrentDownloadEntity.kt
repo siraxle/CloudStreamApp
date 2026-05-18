@@ -16,5 +16,6 @@ data class TorrentDownloadEntity(
     val fileName: String,
     val sizeBytes: Long,
     val torrentName: String,
+    val folderPath: String = "",         // subfolder within torrent, "" = torrent root
     val downloadedAt: Long = System.currentTimeMillis(),
 )
