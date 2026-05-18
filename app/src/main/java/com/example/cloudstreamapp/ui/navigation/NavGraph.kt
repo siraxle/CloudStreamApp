@@ -16,6 +16,7 @@ import com.example.cloudstreamapp.ui.playlist.PlaylistDetailScreen
 import com.example.cloudstreamapp.ui.playlist.PlaylistsScreen
 import com.example.cloudstreamapp.ui.settings.SettingsScreen
 import com.example.cloudstreamapp.ui.torrent.TorrentBrowserScreen
+import com.example.cloudstreamapp.ui.torrent.downloads.TorrentDownloadsScreen
 
 @Composable
 fun NavGraph(
@@ -173,9 +174,6 @@ fun NavGraph(
         composable(Screen.TorrentBrowser.route) {
             TorrentBrowserScreen(
                 onPlayFile = { item, magnetUri, _ ->
-                    // folderPath = item.path.relativePath (the subfolder the file lives in,
-                    // "" for root-level files). PlayerViewModel's listFolder call will land
-                    // in that exact subfolder so only sibling files are queued.
                     navController.navigate(
                         Screen.FolderPlayer.createRoute(
                             cloudType  = "TORRENT",
@@ -184,6 +182,29 @@ fun NavGraph(
                             mediaId    = item.id,
                         )
                     ) { launchSingleTop = true }
+                },
+                onOpenDownloads = {
+                    navController.navigate(Screen.TorrentDownloads.route)
+                },
+            )
+        }
+
+        composable(Screen.TorrentDownloads.route) {
+            TorrentDownloadsScreen(
+                onBack = { navController.popBackStack() },
+                onPlayTrack = { entity ->
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            cloudType = "LOCAL",
+                            sourceUrl = entity.localPath,
+                            itemPath  = entity.fileName,
+                            itemName  = entity.fileName,
+                            mediaId   = "local:${entity.infoHash}:${entity.fileIndex}",
+                        )
+                    ) { launchSingleTop = true }
+                },
+                onOpenPlaylist = { playlistId ->
+                    navController.navigate(Screen.PlaylistDetail.createRoute(playlistId))
                 },
             )
         }

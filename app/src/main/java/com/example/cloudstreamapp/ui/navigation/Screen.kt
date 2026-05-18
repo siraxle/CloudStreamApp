@@ -46,4 +46,5 @@ sealed class Screen(val route: String) {
             "gallery/$cloudType/${Uri.encode(sourceUrl)}/${Uri.encode(folderPath)}"
     }
     object TorrentBrowser : Screen("torrent")
+    object TorrentDownloads : Screen("torrent/downloads")
 }

@@ -8,4 +8,5 @@ enum class CloudType {
     HTTP,
     WEBDAV,
     TORRENT,
+    LOCAL,    // offline-downloaded files; sourceId = absolute file path
 }

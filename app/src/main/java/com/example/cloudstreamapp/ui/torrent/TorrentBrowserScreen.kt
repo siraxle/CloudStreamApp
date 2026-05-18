@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,6 +67,7 @@ import com.example.cloudstreamapp.domain.torrent.TorrentResult
 @Composable
 fun TorrentBrowserScreen(
     onPlayFile: (item: CloudItem, magnetUri: String, infoHash: String) -> Unit,
+    onOpenDownloads: () -> Unit = {},
     viewModel: TorrentBrowserViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -78,6 +80,8 @@ fun TorrentBrowserScreen(
         viewModel.navigateUp()
     }
 
+    val downloadCount = downloadProgress.values.count { it is DownloadProgress.Done }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -87,6 +91,16 @@ fun TorrentBrowserScreen(
                         IconButton(onClick = { viewModel.navigateUp() }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
                         }
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onOpenDownloads) {
+                        Icon(
+                            Icons.Default.OfflinePin,
+                            contentDescription = "Скачанные треки",
+                            tint = if (downloadCount > 0) MaterialTheme.colorScheme.primary
+                                   else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 },
             )
