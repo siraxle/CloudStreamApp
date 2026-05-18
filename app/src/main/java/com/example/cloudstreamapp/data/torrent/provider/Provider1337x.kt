@@ -20,10 +20,13 @@ class Provider1337x @Inject constructor(
 
     private val baseUrl = "https://www.1377x.to"
 
-    override suspend fun search(query: String, page: Int): List<TorrentResult> =
+    override suspend fun search(query: String, page: Int, category: ContentCategory): List<TorrentResult> =
         withContext(Dispatchers.IO) {
             val encodedQuery = URLEncoder.encode(query, "UTF-8").replace("+", "%20")
-            val searchUrl = "$baseUrl/category-search/$encodedQuery/Music/$page/"
+            val searchUrl = if (category == ContentCategory.AUDIO)
+                "$baseUrl/category-search/$encodedQuery/Music/$page/"
+            else
+                "$baseUrl/search/$encodedQuery/$page/"
             val html = fetch(searchUrl) ?: return@withContext emptyList()
             val doc = Jsoup.parse(html, searchUrl)
 

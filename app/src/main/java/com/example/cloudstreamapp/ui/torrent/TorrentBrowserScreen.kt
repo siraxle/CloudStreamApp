@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.cloudstreamapp.core.utils.toHumanReadableSize
+import com.example.cloudstreamapp.data.torrent.provider.ContentCategory
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.torrent.TorrentResult
@@ -57,6 +58,7 @@ fun TorrentBrowserScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val query by viewModel.query.collectAsState()
+    val category by viewModel.category.collectAsState()
 
     BackHandler(enabled = uiState is TorrentBrowserViewModel.UiState.FileList) {
         viewModel.backToResults()
@@ -102,6 +104,22 @@ fun TorrentBrowserScreen(
                     IconButton(onClick = { viewModel.search() }) {
                         Icon(Icons.Default.Search, contentDescription = "Найти")
                     }
+                }
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = category == ContentCategory.AUDIO,
+                        onClick = { viewModel.setCategory(ContentCategory.AUDIO) },
+                        label = { Text("Музыка") },
+                        leadingIcon = { Icon(Icons.Default.MusicNote, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    )
+                    FilterChip(
+                        selected = category == ContentCategory.ALL,
+                        onClick = { viewModel.setCategory(ContentCategory.ALL) },
+                        label = { Text("Всё") },
+                    )
                 }
             }
 

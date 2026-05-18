@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.cloudstreamapp.data.torrent.TorrentCloudProvider
 import com.example.cloudstreamapp.data.torrent.TorrentRepository
+import com.example.cloudstreamapp.data.torrent.provider.ContentCategory
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.CloudResult
@@ -47,6 +48,9 @@ class TorrentBrowserViewModel @Inject constructor(
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
 
+    private val _category = MutableStateFlow(ContentCategory.AUDIO)
+    val category: StateFlow<ContentCategory> = _category.asStateFlow()
+
     // Full unfiltered results kept in memory for instant re-filtering without a new network call
     private var fullResults: List<TorrentResult> = emptyList()
     private var currentMagnetUri: String = ""
@@ -71,7 +75,7 @@ class TorrentBrowserViewModel @Inject constructor(
 
         _uiState.value = UiState.Searching(q)
         viewModelScope.launch {
-            val results = runCatching { repository.search(q) }.getOrElse { emptyList() }
+            val results = runCatching { repository.search(q, category = _category.value) }.getOrElse { emptyList() }
             fullResults = results
             _uiState.value = UiState.SearchResults(q, results, activeFilter = null)
         }
@@ -82,6 +86,13 @@ class TorrentBrowserViewModel @Inject constructor(
         val filtered = if (source == null) fullResults
                        else fullResults.filter { it.source == source.displayName }
         _uiState.value = current.copy(results = filtered, activeFilter = source)
+    }
+
+    fun setCategory(cat: ContentCategory) {
+        if (_category.value == cat) return
+        _category.value = cat
+        val q = _query.value.trim()
+        if (q.isNotBlank() && _uiState.value !is UiState.Idle) search(q)
     }
 
     fun openTorrentResult(result: TorrentResult) {

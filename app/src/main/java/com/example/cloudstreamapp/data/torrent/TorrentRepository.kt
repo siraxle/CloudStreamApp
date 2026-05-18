@@ -5,6 +5,7 @@ import com.example.cloudstreamapp.data.torrent.provider.PirateBayProvider
 import com.example.cloudstreamapp.data.torrent.provider.Provider1337x
 import com.example.cloudstreamapp.data.torrent.provider.RuTrackerProvider
 import com.example.cloudstreamapp.data.torrent.provider.TorrentProviderConfig
+import com.example.cloudstreamapp.data.torrent.provider.ContentCategory
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 import com.example.cloudstreamapp.data.torrent.provider.Torrentz2Provider
 import com.example.cloudstreamapp.data.torrent.provider.extractInfoHash
@@ -31,18 +32,22 @@ class TorrentRepository @Inject constructor(
      * (1337x, RuTracker), deduplicates by info hash, and returns the merged list
      * sorted by seeders descending.
      */
-    suspend fun search(query: String, page: Int = 1): List<TorrentResult> = coroutineScope {
+    suspend fun search(
+        query: String,
+        page: Int = 1,
+        category: ContentCategory = ContentCategory.AUDIO,
+    ): List<TorrentResult> = coroutineScope {
         val jobs = TorrentSource.entries.map { src ->
             async {
                 val enabled = config.isEnabled(src).first()
                 if (!enabled) return@async emptyList()
                 runCatching {
                     when (src) {
-                        TorrentSource.PIRATE_BAY -> pirateBay.search(query, page)
-                        TorrentSource.NYAA -> nyaa.search(query, page)
-                        TorrentSource.X1337 -> x1337.search(query, page)
-                        TorrentSource.TORRENTZ2 -> torrentz2.search(query, page)
-                        TorrentSource.RUTRACKER -> ruTracker.search(query, page)
+                        TorrentSource.PIRATE_BAY -> pirateBay.search(query, page, category)
+                        TorrentSource.NYAA -> nyaa.search(query, page, category)
+                        TorrentSource.X1337 -> x1337.search(query, page, category)
+                        TorrentSource.TORRENTZ2 -> torrentz2.search(query, page, category)
+                        TorrentSource.RUTRACKER -> ruTracker.search(query, page, category)
                     }
                 }.getOrElse { emptyList() }
             }

@@ -16,11 +16,12 @@ class NyaaProvider @Inject constructor(
 
     override val source: TorrentSource = TorrentSource.NYAA
 
-    override suspend fun search(query: String, page: Int): List<TorrentResult> =
+    override suspend fun search(query: String, page: Int, category: ContentCategory): List<TorrentResult> =
         withContext(Dispatchers.IO) {
             val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-            // cat=2_0 = audio
-            val url = "https://nyaa.si/?page=rss&q=$encodedQuery&c=2_0&p=$page"
+            // c=2_0 = audio; c=0_0 = all
+            val cat = if (category == ContentCategory.AUDIO) "2_0" else "0_0"
+            val url = "https://nyaa.si/?page=rss&q=$encodedQuery&c=$cat&p=$page"
             val request = Request.Builder().url(url).build()
             val body = okHttpClient.newCall(request).execute().use { it.body?.string() }
                 ?: return@withContext emptyList()

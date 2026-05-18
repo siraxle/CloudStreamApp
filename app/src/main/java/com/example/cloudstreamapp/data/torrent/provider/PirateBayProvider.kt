@@ -16,10 +16,12 @@ class PirateBayProvider @Inject constructor(
 
     override val source: TorrentSource = TorrentSource.PIRATE_BAY
 
-    override suspend fun search(query: String, page: Int): List<TorrentResult> =
+    override suspend fun search(query: String, page: Int, category: ContentCategory): List<TorrentResult> =
         withContext(Dispatchers.IO) {
             val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-            val url = "https://apibay.org/q.php?q=$encodedQuery&cat=0"
+            // cat=100 = all audio (music, audiobooks, FLAC…); cat=0 = all categories
+            val cat = if (category == ContentCategory.AUDIO) 100 else 0
+            val url = "https://apibay.org/q.php?q=$encodedQuery&cat=$cat"
             val request = Request.Builder().url(url).build()
             val body = okHttpClient.newCall(request).execute().use { it.body?.string() }
                 ?: return@withContext emptyList()

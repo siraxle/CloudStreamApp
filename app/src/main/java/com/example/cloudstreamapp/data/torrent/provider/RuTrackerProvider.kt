@@ -26,7 +26,7 @@ class RuTrackerProvider @Inject constructor(
     private val sessionMutex = Mutex()
     private var sessionInitialized = false
 
-    override suspend fun search(query: String, page: Int): List<TorrentResult> =
+    override suspend fun search(query: String, page: Int, category: ContentCategory): List<TorrentResult> =
         withContext(Dispatchers.IO) {
             ensureSession()
 

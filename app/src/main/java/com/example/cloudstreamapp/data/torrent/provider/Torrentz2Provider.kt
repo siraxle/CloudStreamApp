@@ -16,7 +16,7 @@ class Torrentz2Provider @Inject constructor(
 
     override val source: TorrentSource = TorrentSource.TORRENTZ2
 
-    override suspend fun search(query: String, page: Int): List<TorrentResult> =
+    override suspend fun search(query: String, page: Int, category: ContentCategory): List<TorrentResult> =
         withContext(Dispatchers.IO) {
             val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
             val url = "https://torrentz2.nz/search?q=$encodedQuery"
