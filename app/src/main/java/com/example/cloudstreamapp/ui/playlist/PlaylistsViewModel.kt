@@ -46,6 +46,7 @@ class PlaylistsViewModel @Inject constructor(
         val cachedTracks: Int,
         val downloadingTracks: Int,
         val isFavorite: Boolean = false,
+        val isFromTorrent: Boolean = false,
     )
 
     sealed class ImportResult {
@@ -79,8 +80,11 @@ class PlaylistsViewModel @Inject constructor(
                 } else {
                     combine(
                         playlists.map { playlist ->
-                            repo.getItemCacheStats(playlist.id).map { (total, cached, downloading) ->
-                                PlaylistUiItem(playlist, total, cached, downloading)
+                            combine(
+                                repo.getItemCacheStats(playlist.id),
+                                repo.hasLocalTracks(playlist.id),
+                            ) { (total, cached, downloading), hasLocal ->
+                                PlaylistUiItem(playlist, total, cached, downloading, isFromTorrent = hasLocal)
                             }
                         }
                     ) { it.toList() }

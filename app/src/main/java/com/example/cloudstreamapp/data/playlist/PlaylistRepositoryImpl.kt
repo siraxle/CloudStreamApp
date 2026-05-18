@@ -52,6 +52,9 @@ class PlaylistRepositoryImpl @Inject constructor(
         return entity.toDomain(items.map { it.toDomain() })
     }
 
+    suspend fun findByName(name: String): Playlist? =
+        playlistDao.getByName(name)?.toDomain()
+
     override suspend fun create(playlist: Playlist) =
         playlistDao.insert(playlist.toEntity())
 
@@ -68,8 +71,12 @@ class PlaylistRepositoryImpl @Inject constructor(
             for (item in items) {
                 val otherRefs = playlistDao.countOtherReferences(item.mediaId, id)
                 if (otherRefs == 0) {
-                    metadataDao.deleteById(item.mediaId)
-                    mediaIdsToClean.add(item.mediaId)
+                    val meta = metadataDao.getById(item.mediaId)
+                    // LOCAL = torrent file on disk; managed by TorrentDownloadManager, not here
+                    if (meta?.cloudType != CloudType.LOCAL.name) {
+                        metadataDao.deleteById(item.mediaId)
+                        mediaIdsToClean.add(item.mediaId)
+                    }
                 }
             }
         }
@@ -105,8 +112,12 @@ class PlaylistRepositoryImpl @Inject constructor(
                 playlistDao.deleteItem(itemId)
                 val otherRefs = playlistDao.countOtherReferences(item.mediaId, item.playlistId)
                 if (otherRefs == 0) {
-                    metadataDao.deleteById(item.mediaId)
-                    mediaIdToClean = item.mediaId
+                    val meta = metadataDao.getById(item.mediaId)
+                    // LOCAL = torrent file on disk; managed by TorrentDownloadManager, not here
+                    if (meta?.cloudType != CloudType.LOCAL.name) {
+                        metadataDao.deleteById(item.mediaId)
+                        mediaIdToClean = item.mediaId
+                    }
                 }
             } else {
                 playlistDao.deleteItem(itemId)
@@ -186,6 +197,10 @@ class PlaylistRepositoryImpl @Inject constructor(
 
     // Returns Triple(total, cached, downloading) for the playlist list screen.
     // Also reacts to _metadataVersion so counts update after downloads complete.
+    fun hasLocalTracks(playlistId: String): Flow<Boolean> =
+        playlistDao.getItemsForPlaylist(playlistId)
+            .map { items -> items.any { it.mediaId.startsWith("local:") } }
+
     fun getItemCacheStats(playlistId: String): Flow<Triple<Int, Int, Int>> =
         combine(
             playlistDao.getItemsForPlaylist(playlistId),
