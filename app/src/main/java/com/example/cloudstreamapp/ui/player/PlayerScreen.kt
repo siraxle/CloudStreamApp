@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -99,6 +100,8 @@ fun PlayerScreen(
     val coverImages by viewModel.coverImages.collectAsState()
     val embeddedArtUri by viewModel.embeddedArtUri.collectAsState()
     val playbackSpeed by viewModel.playbackSpeed.collectAsState()
+    val isTorrentStream = viewModel.isTorrentStream
+    val torrentProgress by viewModel.torrentProgress.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -115,6 +118,8 @@ fun PlayerScreen(
         VideoPlayerContent(
             player = player!!,
             state = state,
+            isTorrentStream = isTorrentStream,
+            torrentProgress = torrentProgress,
             onBack = onBack,
             onSeekBy = viewModel::seekBy,
             onSeekTo = viewModel::seekTo,
@@ -130,6 +135,8 @@ fun PlayerScreen(
         AudioPlayerContent(
             state = state,
             isLoading = isLoading,
+            isTorrentStream = isTorrentStream,
+            torrentProgress = torrentProgress,
             coverImages = coverImages,
             embeddedArtUri = embeddedArtUri,
             onResolveCoverUrl = viewModel::resolveCoverUrl,
@@ -161,6 +168,8 @@ fun PlayerScreen(
 private fun AudioPlayerContent(
     state: PlayerViewModel.PlayerState,
     isLoading: Boolean,
+    isTorrentStream: Boolean = false,
+    torrentProgress: Float? = null,
     coverImages: List<CloudItem>,
     embeddedArtUri: String?,
     onResolveCoverUrl: suspend (CloudItem) -> String?,
@@ -219,8 +228,47 @@ private fun AudioPlayerContent(
                     onResolveCoverUrl = onResolveCoverUrl,
                     modifier = Modifier.fillMaxSize(),
                 )
-                if (isLoading) {
-                    CircularProgressIndicator()
+                if (isLoading || state.isBuffering) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier
+                            .background(
+                                MaterialTheme.colorScheme.surface.copy(alpha = 0.80f),
+                                RoundedCornerShape(12.dp),
+                            )
+                            .padding(horizontal = 24.dp, vertical = 16.dp),
+                    ) {
+                        CircularProgressIndicator()
+                        if (state.isBuffering && !isLoading && isTorrentStream) {
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                "Загрузка из торрента…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Center,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Подождите, идёт скачивание фрагментов",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                            torrentProgress?.let { progress ->
+                                Spacer(Modifier.height(12.dp))
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier.fillMaxWidth(0.65f),
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "${(progress * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -410,6 +458,8 @@ private fun CoverImagePage(
 private fun VideoPlayerContent(
     player: Player,
     state: PlayerViewModel.PlayerState,
+    isTorrentStream: Boolean = false,
+    torrentProgress: Float? = null,
     onBack: () -> Unit,
     onSeekBy: (Long) -> Unit,
     onSeekTo: (Long) -> Unit,
@@ -708,6 +758,38 @@ private fun VideoPlayerContent(
                         modifier = Modifier.fillMaxWidth(),
                         darkBackground = true,
                     )
+                }
+            }
+        }
+
+        if (state.isBuffering) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.align(Alignment.Center),
+            ) {
+                CircularProgressIndicator(color = Color.White)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (isTorrentStream) "Загрузка из торрента…" else "Загрузка…",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (isTorrentStream) {
+                    torrentProgress?.let { progress ->
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth(0.5f),
+                            color = Color.White,
+                            trackColor = Color.White.copy(alpha = 0.3f),
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "${(progress * 100).toInt()}%",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
                 }
             }
         }

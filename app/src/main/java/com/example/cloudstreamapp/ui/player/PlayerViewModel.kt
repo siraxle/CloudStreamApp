@@ -13,6 +13,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
+import com.example.cloudstreamapp.data.torrent.engine.LibtorrentEngine
 import com.example.cloudstreamapp.core.utils.isImageFile
 import com.example.cloudstreamapp.core.utils.isMediaFile
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
@@ -41,6 +42,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.example.cloudstreamapp.data.torrent.provider.extractInfoHash
 import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import javax.inject.Inject
 
@@ -53,6 +55,7 @@ class PlayerViewModel @Inject constructor(
     private val playlistRepo: PlaylistRepositoryImpl,
     private val cacheManager: MediaCacheManager,
     private val settings: SettingsRepositoryPort,
+    private val torrentEngine: LibtorrentEngine,
 ) : ViewModel() {
 
     private var controller: MediaController? = null
@@ -77,6 +80,11 @@ class PlayerViewModel @Inject constructor(
     private val _folderInfo = MutableStateFlow<FolderInfo?>(null)
     val folderInfo: StateFlow<FolderInfo?> = _folderInfo.asStateFlow()
 
+    val isTorrentStream: Boolean = savedStateHandle.get<String>("cloudType") == "TORRENT"
+
+    private val _torrentProgress = MutableStateFlow<Float?>(null)
+    val torrentProgress: StateFlow<Float?> = _torrentProgress.asStateFlow()
+
     // All image files found in the current folder — URLs resolved on-demand in the UI
     private val _coverImages = MutableStateFlow<List<CloudItem>>(emptyList())
     val coverImages: StateFlow<List<CloudItem>> = _coverImages.asStateFlow()
@@ -98,6 +106,19 @@ class PlayerViewModel @Inject constructor(
             savedStateHandle.get<String>("playlistId") != null -> fetchAndPlayPlaylist()
             savedStateHandle.get<String>("encodedFolderPath") != null -> fetchAndPlayFolder()
             else -> fetchAndPlay()
+        }
+        if (isTorrentStream) {
+            // infoHash is embedded in the magnetUri (sourceUrl), not in folderPath.
+            // folderPath now holds the subfolder path within the torrent ("" = root).
+            val magnetUri = savedStateHandle.get<String>("encodedSourceUrl") ?: ""
+            val infoHash = extractInfoHash(magnetUri) ?: ""
+            if (infoHash.isNotEmpty()) {
+                viewModelScope.launch {
+                    torrentEngine.downloadProgressFlow(infoHash).collect { progress ->
+                        _torrentProgress.value = progress
+                    }
+                }
+            }
         }
     }
 
@@ -516,6 +537,7 @@ class PlayerViewModel @Inject constructor(
             durationMs = c.duration.coerceAtLeast(0),
             positionMs = c.currentPosition.coerceAtLeast(0),
             hasMedia = c.mediaItemCount > 0,
+        isBuffering = c.playbackState == Player.STATE_BUFFERING && c.mediaItemCount > 0,
         )
         _embeddedArtUri.value = c.mediaMetadata.artworkUri?.toString()
         // If no images loaded yet (e.g. NowPlaying or any fresh ViewModel), recover the folder
@@ -660,6 +682,7 @@ class PlayerViewModel @Inject constructor(
         val positionMs: Long = 0L,
         val hasMedia: Boolean = false,
         val hasVideo: Boolean = false,
+        val isBuffering: Boolean = false,
     )
 
     data class FolderInfo(

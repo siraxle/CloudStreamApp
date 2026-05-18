@@ -172,13 +172,15 @@ fun NavGraph(
 
         composable(Screen.TorrentBrowser.route) {
             TorrentBrowserScreen(
-                onPlayFile = { item, magnetUri, infoHash ->
-                    // Use FolderPlayer mode: auto-queues all files in the torrent
+                onPlayFile = { item, magnetUri, _ ->
+                    // folderPath = item.path.relativePath (the subfolder the file lives in,
+                    // "" for root-level files). PlayerViewModel's listFolder call will land
+                    // in that exact subfolder so only sibling files are queued.
                     navController.navigate(
                         Screen.FolderPlayer.createRoute(
                             cloudType  = "TORRENT",
                             sourceUrl  = magnetUri,
-                            folderPath = infoHash,
+                            folderPath = item.path.relativePath,
                             mediaId    = item.id,
                         )
                     ) { launchSingleTop = true }

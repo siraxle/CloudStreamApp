@@ -17,12 +17,22 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -38,9 +48,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -48,6 +59,7 @@ import com.example.cloudstreamapp.core.utils.toHumanReadableSize
 import com.example.cloudstreamapp.data.torrent.provider.ContentCategory
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 import com.example.cloudstreamapp.domain.model.CloudItem
+import com.example.cloudstreamapp.domain.torrent.DownloadProgress
 import com.example.cloudstreamapp.domain.torrent.TorrentResult
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,9 +71,11 @@ fun TorrentBrowserScreen(
     val uiState by viewModel.uiState.collectAsState()
     val query by viewModel.query.collectAsState()
     val category by viewModel.category.collectAsState()
+    val downloadProgress by viewModel.downloadProgress.collectAsState()
 
+    // Back inside folder hierarchy → navigate up; at root → back to results
     BackHandler(enabled = uiState is TorrentBrowserViewModel.UiState.FileList) {
-        viewModel.backToResults()
+        viewModel.navigateUp()
     }
 
     Scaffold(
@@ -70,8 +84,8 @@ fun TorrentBrowserScreen(
                 title = { Text("Торренты") },
                 navigationIcon = {
                     if (uiState is TorrentBrowserViewModel.UiState.FileList) {
-                        IconButton(onClick = { viewModel.backToResults() }) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Назад")
+                        IconButton(onClick = { viewModel.navigateUp() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
                         }
                     }
                 },
@@ -99,6 +113,13 @@ fun TorrentBrowserScreen(
                         modifier = Modifier.weight(1f),
                         placeholder = { Text("Поиск или magnet-ссылка…") },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Text,
+                            imeAction = ImeAction.Search,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onSearch = { viewModel.search() },
+                        ),
                     )
                     Spacer(Modifier.width(8.dp))
                     IconButton(onClick = { viewModel.search() }) {
@@ -139,7 +160,15 @@ fun TorrentBrowserScreen(
 
                 is TorrentBrowserViewModel.UiState.FileList -> FileListContent(
                     state = state,
+                    downloadProgressMap = downloadProgress,
                     onPlayFile = onPlayFile,
+                    onNavigateToFolder = viewModel::navigateToFolder,
+                    onNavigateToBreadcrumb = viewModel::navigateToBreadcrumb,
+                    onLoadPage = viewModel::loadPage,
+                    onDownloadFile = viewModel::downloadFile,
+                    onDownloadFolder = viewModel::downloadFolderItem,
+                    onCancelDownload = viewModel::cancelDownload,
+                    onDeleteDownload = viewModel::deleteDownload,
                 )
 
                 is TorrentBrowserViewModel.UiState.Error -> ErrorContent(
@@ -199,13 +228,8 @@ private fun SearchResultsContent(
     onFilterSource: (TorrentSource?) -> Unit,
     onOpenResult: (TorrentResult) -> Unit,
 ) {
-    val presentSources = remember(state.results) {
-        state.results.map { it.source }.distinct()
-    }
-    val allSources = TorrentSource.entries.filter { it.displayName in presentSources }
-
     Column {
-        if (allSources.size > 1) {
+        if (state.availableSources.size > 1) {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -214,10 +238,10 @@ private fun SearchResultsContent(
                     FilterChip(
                         selected = state.activeFilter == null,
                         onClick = { onFilterSource(null) },
-                        label = { Text("Все (${state.results.size})") },
+                        label = { Text("Все (${state.totalCount})") },
                     )
                 }
-                items(allSources) { src ->
+                items(state.availableSources) { src ->
                     FilterChip(
                         selected = state.activeFilter == src,
                         onClick = { onFilterSource(src) },
@@ -270,36 +294,254 @@ private fun TorrentResultItem(result: TorrentResult, onClick: () -> Unit) {
 @Composable
 private fun FileListContent(
     state: TorrentBrowserViewModel.UiState.FileList,
+    downloadProgressMap: Map<String, DownloadProgress>,
     onPlayFile: (item: CloudItem, magnetUri: String, infoHash: String) -> Unit,
+    onNavigateToFolder: (CloudItem) -> Unit,
+    onNavigateToBreadcrumb: (Int) -> Unit,
+    onLoadPage: (Int) -> Unit,
+    onDownloadFile: (CloudItem) -> Unit,
+    onDownloadFolder: (CloudItem) -> Unit,
+    onCancelDownload: (CloudItem) -> Unit,
+    onDeleteDownload: (CloudItem) -> Unit,
 ) {
-    if (state.items.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Нет аудиофайлов в этом торренте")
+    Column(Modifier.fillMaxSize()) {
+        BreadcrumbRow(state, onNavigateToBreadcrumb)
+
+        when {
+            state.totalCount == 0 -> {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text("Нет аудиофайлов в этой папке")
+                }
+            }
+            else -> {
+                LazyColumn(Modifier.weight(1f)) {
+                    items(state.pageItems, key = { it.id }) { item ->
+                        if (item.type == CloudItem.ItemType.DIRECTORY) {
+                            FolderItem(
+                                item = item,
+                                onClick = { onNavigateToFolder(item) },
+                                onDownload = { onDownloadFolder(item) },
+                            )
+                        } else {
+                            FileItem(
+                                item = item,
+                                dlProgress = downloadProgressMap[item.id],
+                                onClick = { onPlayFile(item, state.magnetUri, state.infoHash) },
+                                onDownload = { onDownloadFile(item) },
+                                onCancelDownload = { onCancelDownload(item) },
+                                onDeleteDownload = { onDeleteDownload(item) },
+                            )
+                        }
+                        HorizontalDivider()
+                    }
+                }
+                if (state.totalPages > 1) {
+                    PaginationRow(state, onLoadPage)
+                }
+            }
         }
-        return
     }
-    LazyColumn {
-        items(state.items, key = { it.id }) { item ->
-            ListItem(
-                modifier = Modifier.clickable {
-                    onPlayFile(item, state.magnetUri, state.infoHash)
-                },
-                headlineContent = {
-                    Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                },
-                supportingContent = item.sizeBytes?.let { size ->
-                    { Text(size.toHumanReadableSize(), style = MaterialTheme.typography.bodySmall) }
-                },
-                leadingContent = {
-                    Icon(
-                        Icons.Default.MusicNote,
-                        contentDescription = null,
-                        modifier = Modifier.size(24.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                },
+}
+
+@Composable
+private fun BreadcrumbRow(
+    state: TorrentBrowserViewModel.UiState.FileList,
+    onNavigateToBreadcrumb: (Int) -> Unit,
+) {
+    val parts = if (state.currentPath.isEmpty()) emptyList()
+                else state.currentPath.split("/")
+
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        item {
+            val isRoot = state.currentPath.isEmpty()
+            Text(
+                text = state.torrentName.ifBlank { "Торрент" },
+                modifier = Modifier
+                    .clickable(enabled = !isRoot) { onNavigateToBreadcrumb(0) }
+                    .padding(horizontal = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (isRoot) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            HorizontalDivider()
+        }
+
+        itemsIndexed(parts) { idx, part ->
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            val isLast = idx == parts.lastIndex
+            Text(
+                text = part,
+                modifier = Modifier
+                    .clickable(enabled = !isLast) { onNavigateToBreadcrumb(idx + 1) }
+                    .padding(horizontal = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (isLast) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+    HorizontalDivider()
+}
+
+@Composable
+private fun FolderItem(item: CloudItem, onClick: () -> Unit, onDownload: () -> Unit) {
+    ListItem(
+        modifier = Modifier.clickable(onClick = onClick),
+        headlineContent = {
+            Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        },
+        leadingContent = {
+            Icon(
+                Icons.Default.Folder,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.secondary,
+            )
+        },
+        trailingContent = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                IconButton(onClick = onDownload, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        Icons.Default.Download,
+                        contentDescription = "Скачать папку",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+    )
+}
+
+@Composable
+private fun FileItem(
+    item: CloudItem,
+    dlProgress: DownloadProgress?,
+    onClick: () -> Unit,
+    onDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
+    onDeleteDownload: () -> Unit,
+) {
+    ListItem(
+        modifier = Modifier.clickable(onClick = onClick),
+        headlineContent = {
+            Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        },
+        supportingContent = {
+            Column {
+                item.sizeBytes?.let { size ->
+                    Text(size.toHumanReadableSize(), style = MaterialTheme.typography.bodySmall)
+                }
+                if (dlProgress is DownloadProgress.Downloading) {
+                    Spacer(Modifier.height(2.dp))
+                    LinearProgressIndicator(
+                        progress = { dlProgress.fraction },
+                        modifier = Modifier.fillMaxWidth(0.7f),
+                    )
+                }
+            }
+        },
+        leadingContent = {
+            Icon(
+                Icons.Default.MusicNote,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        },
+        trailingContent = {
+            when (dlProgress) {
+                null, is DownloadProgress.Failed -> {
+                    IconButton(onClick = onDownload, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            Icons.Default.Download,
+                            contentDescription = "Скачать",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                is DownloadProgress.Queued -> {
+                    Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    }
+                }
+                is DownloadProgress.Downloading -> {
+                    IconButton(onClick = onCancelDownload, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Отменить",
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                is DownloadProgress.Done -> {
+                    IconButton(onClick = onDeleteDownload, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = "Скачано — нажмите для удаления",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun PaginationRow(
+    state: TorrentBrowserViewModel.UiState.FileList,
+    onLoadPage: (Int) -> Unit,
+) {
+    HorizontalDivider()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(
+            onClick = { onLoadPage(state.page - 1) },
+            enabled = state.page > 1,
+        ) {
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Предыдущая страница")
+        }
+
+        Text(
+            text = "${state.page} / ${state.totalPages}  (${state.totalCount})",
+            style = MaterialTheme.typography.bodySmall,
+        )
+
+        IconButton(
+            onClick = { onLoadPage(state.page + 1) },
+            enabled = state.page < state.totalPages,
+        ) {
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Следующая страница")
         }
     }
 }

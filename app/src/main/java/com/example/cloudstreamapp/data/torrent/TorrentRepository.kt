@@ -82,6 +82,34 @@ class TorrentRepository @Inject constructor(
             .groupBy { it.infoHash }
             .values
             .map { dupes -> dupes.maxByOrNull { it.seeders }!! }
-            .sortedByDescending { it.seeders }
+            .sortedWith(
+                compareByDescending<TorrentResult> { relevanceTier(query, it.name) }
+                    .thenByDescending { it.seeders }
+            )
+    }
+
+    /**
+     * Returns a relevance tier (0–4) indicating how well [name] matches [query]:
+     *  4 — name contains the full query as a substring
+     *  3 — every query word is present in the name
+     *  2 — majority (>50 %) of query words are present
+     *  1 — at least one query word is present
+     *  0 — no match
+     * Single-character tokens are ignored to avoid noise from conjunctions etc.
+     */
+    private fun relevanceTier(query: String, name: String): Int {
+        val q = query.trim().lowercase()
+        val n = name.lowercase()
+        if (q.isBlank()) return 0
+        if (n.contains(q)) return 4
+        val words = q.split(Regex("\\s+")).filter { it.length > 1 }
+        if (words.isEmpty()) return 0
+        val matched = words.count { n.contains(it) }
+        return when {
+            matched == words.size -> 3
+            matched * 2 > words.size -> 2
+            matched > 0 -> 1
+            else -> 0
+        }
     }
 }

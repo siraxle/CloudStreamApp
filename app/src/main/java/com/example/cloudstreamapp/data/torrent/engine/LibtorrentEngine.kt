@@ -5,6 +5,10 @@ import android.util.Log
 import com.example.cloudstreamapp.domain.torrent.TorrentFile
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import org.libtorrent4j.AlertListener
 import org.libtorrent4j.Priority
@@ -239,6 +243,67 @@ class LibtorrentEngine @Inject constructor(
             session.stop()
             Log.i(TAG, "libtorrent session stopped")
         }
+    }
+
+    /** Returns fraction [0.0, 1.0] of pieces already downloaded for [infoHash]. */
+    fun getDownloadProgress(infoHash: String): Float {
+        val state = states[infoHash] ?: return 0f
+        val total = state.info.numPieces().coerceAtLeast(1)
+        return state.downloadedPieces.size.toFloat() / total
+    }
+
+    /** Emits [getDownloadProgress] every 500 ms until the flow is cancelled. */
+    fun downloadProgressFlow(infoHash: String): Flow<Float> = flow {
+        while (true) {
+            emit(getDownloadProgress(infoHash))
+            delay(500)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * Emits the download fraction [0.0, 1.0] for a single file every 500 ms.
+     * Uses the piece range that belongs exclusively to [fileIndex] in the torrent.
+     */
+    fun fileDownloadProgressFlow(infoHash: String, fileIndex: Int): Flow<Float> = flow {
+        while (true) {
+            emit(computeFileProgress(infoHash, fileIndex))
+            delay(500)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * Sets all pieces belonging to [fileIndex] to TOP_PRIORITY so the torrent
+     * client focuses on downloading them before other pieces.
+     */
+    fun boostFilePriority(infoHash: String, fileIndex: Int) {
+        val state = states[infoHash] ?: return
+        val (firstPiece, lastPiece) = filePieceRange(state, fileIndex) ?: return
+        for (piece in firstPiece..lastPiece) {
+            state.handle.piecePriority(piece, Priority.TOP_PRIORITY)
+        }
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    private fun computeFileProgress(infoHash: String, fileIndex: Int): Float {
+        val state = states[infoHash] ?: return 0f
+        val (firstPiece, lastPiece) = filePieceRange(state, fileIndex) ?: return 1f
+        val total = lastPiece - firstPiece + 1
+        val done = state.downloadedPieces.subSet(firstPiece, lastPiece + 1).size
+        return done.toFloat() / total
+    }
+
+    /** Returns the [firstPiece, lastPiece] piece index range for [fileIndex], or null for empty files. */
+    private fun filePieceRange(state: ActiveTorrent, fileIndex: Int): Pair<Int, Int>? {
+        val fs = state.info.files()
+        val pieceLen = state.info.pieceLength().toLong()
+        var globalStart = 0L
+        for (i in 0 until fileIndex) globalStart += fs.fileSize(i)
+        val fileSize = fs.fileSize(fileIndex)
+        if (fileSize <= 0L) return null
+        val firstPiece = (globalStart / pieceLen).toInt()
+        val lastPiece = ((globalStart + fileSize - 1) / pieceLen).toInt()
+        return firstPiece to lastPiece
     }
 
     // ── Alert handlers ────────────────────────────────────────────────────────
