@@ -198,6 +198,9 @@ fun NavGraph(
                 onOpenLocalTorrents = {
                     navController.navigate(Screen.LocalTorrents.route)
                 },
+                onOpenPlaylist = { playlistId ->
+                    navController.navigate(Screen.PlaylistDetail.createRoute(playlistId))
+                },
                 localTorrentToOpen = localTorrentToOpen,
                 onLocalTorrentConsumed = {
                     backStackEntry.savedStateHandle["open_local_torrent_hash"] = ""
@@ -225,6 +228,9 @@ fun NavGraph(
                         ?.savedStateHandle
                         ?.set("open_local_torrent_hash", infoHash)
                     navController.popBackStack()
+                },
+                onOpenPlaylist = { playlistId ->
+                    navController.navigate(Screen.PlaylistDetail.createRoute(playlistId))
                 },
             )
         }

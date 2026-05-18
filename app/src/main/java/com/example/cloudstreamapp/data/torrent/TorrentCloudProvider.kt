@@ -88,6 +88,31 @@ class TorrentCloudProvider @Inject constructor(
     fun listFolderItems(infoHash: String, folderPath: String, magnetUri: String): List<CloudItem> =
         buildFolderItems(engine.listFiles(infoHash), folderPath, infoHash, magnetUri)
 
+    /**
+     * Returns all audio files under [folderPath] (recursively, including sub-folders).
+     * Each item's [CloudPath.relativePath] is the file's immediate parent directory so
+     * the player can resolve adjacent tracks correctly.
+     */
+    fun listAllAudioFilesInFolder(infoHash: String, folderPath: String, magnetUri: String): List<CloudItem> {
+        val prefix = if (folderPath.isEmpty()) "" else "$folderPath/"
+        return engine.listFiles(infoHash)
+            .filter { it.name.isAudioFile() }
+            .filter { prefix.isEmpty() || it.relativePath.startsWith(prefix) }
+            .sortedBy { it.relativePath }
+            .map { file ->
+                val parentDir = file.relativePath.substringBeforeLast("/", "")
+                CloudItem(
+                    id = "$infoHash:${file.index}",
+                    name = file.name,
+                    path = CloudPath(sourceId = magnetUri, relativePath = parentDir, cloudType = CloudType.TORRENT),
+                    type = CloudItem.ItemType.FILE,
+                    mimeType = mimeFor(file.name),
+                    sizeBytes = file.sizeBytes,
+                    cacheStatus = CacheStatus.REMOTE,
+                )
+            }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun buildFolderItems(

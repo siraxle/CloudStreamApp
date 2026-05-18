@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.OfflinePin
+import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.runtime.LaunchedEffect
@@ -75,6 +76,7 @@ fun TorrentBrowserScreen(
     onPlayFile: (item: CloudItem, magnetUri: String, infoHash: String) -> Unit,
     onOpenDownloads: () -> Unit = {},
     onOpenLocalTorrents: () -> Unit = {},
+    onOpenPlaylist: (String) -> Unit = {},
     localTorrentToOpen: String = "",
     onLocalTorrentConsumed: () -> Unit = {},
     viewModel: TorrentBrowserViewModel = hiltViewModel(),
@@ -84,6 +86,14 @@ fun TorrentBrowserScreen(
         if (localTorrentToOpen.isNotEmpty()) {
             viewModel.openLocalTorrent(localTorrentToOpen)
             onLocalTorrentConsumed()
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is TorrentBrowserViewModel.Event.OpenPlaylist -> onOpenPlaylist(event.playlistId)
+            }
         }
     }
 
@@ -245,6 +255,7 @@ fun TorrentBrowserScreen(
                         onCancelDownload = viewModel::cancelDownload,
                         onCancelFolderDownload = viewModel::cancelFolderDownload,
                         onDeleteDownload = viewModel::deleteDownload,
+                        onAddFolderToPlaylist = viewModel::addFolderToPlaylist,
                     )
                 }
 
@@ -388,6 +399,7 @@ private fun FileListContent(
     onCancelDownload: (CloudItem) -> Unit,
     onCancelFolderDownload: (CloudItem) -> Unit,
     onDeleteDownload: (CloudItem) -> Unit,
+    onAddFolderToPlaylist: (CloudItem) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         BreadcrumbRow(state, onNavigateToBreadcrumb)
@@ -408,6 +420,7 @@ private fun FileListContent(
                                 onClick = { onNavigateToFolder(item) },
                                 onDownload = { onDownloadFolder(item) },
                                 onCancelDownload = { onCancelFolderDownload(item) },
+                                onAddToPlaylist = { onAddFolderToPlaylist(item) },
                             )
                         } else {
                             FileItem(
@@ -489,6 +502,7 @@ private fun FolderItem(
     onClick: () -> Unit,
     onDownload: () -> Unit,
     onCancelDownload: () -> Unit,
+    onAddToPlaylist: () -> Unit,
 ) {
     ListItem(
         modifier = Modifier.clickable(onClick = onClick),
@@ -508,6 +522,14 @@ private fun FolderItem(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(0.dp),
             ) {
+                IconButton(onClick = onAddToPlaylist, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        Icons.Default.PlaylistAdd,
+                        contentDescription = "Добавить папку в плейлист",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 if (isDownloading) {
                     IconButton(onClick = onCancelDownload, modifier = Modifier.size(36.dp)) {
                         Icon(

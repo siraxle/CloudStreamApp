@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.data.torrent.TorrentCloudProvider
 import com.example.cloudstreamapp.data.torrent.TorrentRepository
 import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadManager
@@ -12,18 +13,23 @@ import com.example.cloudstreamapp.data.torrent.provider.ContentCategory
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.CloudResult
+import com.example.cloudstreamapp.domain.model.Playlist
 import com.example.cloudstreamapp.domain.torrent.DownloadProgress
 import com.example.cloudstreamapp.domain.torrent.TorrentResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 import javax.inject.Inject
 
 @HiltViewModel
@@ -33,6 +39,7 @@ class TorrentBrowserViewModel @Inject constructor(
     private val repository: TorrentRepository,
     private val downloadManager: TorrentDownloadManager,
     private val localTorrentRepo: LocalTorrentRepository,
+    private val playlistRepo: PlaylistRepositoryImpl,
 ) : ViewModel() {
 
     companion object {
@@ -330,6 +337,51 @@ class TorrentBrowserViewModel @Inject constructor(
                     }
                 }
                 .onFailure { _uiState.value = UiState.Error(it.message ?: "Failed to open torrent file") }
+        }
+    }
+
+    // ── Playlist actions ─────────────────────────────────────────────────────
+
+    sealed class Event {
+        data class OpenPlaylist(val playlistId: String) : Event()
+    }
+
+    private val _events = MutableSharedFlow<Event>(extraBufferCapacity = 1)
+    val events: SharedFlow<Event> = _events.asSharedFlow()
+
+    /** Creates (or reopens) a playlist containing all audio files under [folderItem] recursively. */
+    fun addFolderToPlaylist(folderItem: CloudItem) {
+        val current = _uiState.value as? UiState.FileList ?: return
+        viewModelScope.launch {
+            val audioFiles = withContext(Dispatchers.Default) {
+                provider.listAllAudioFilesInFolder(
+                    infoHash = current.infoHash,
+                    folderPath = folderItem.path.relativePath,
+                    magnetUri = current.magnetUri,
+                )
+            }
+            if (audioFiles.isEmpty()) return@launch
+            val playlistName = folderItem.name
+            val existing = playlistRepo.findByName(playlistName)
+            if (existing != null) {
+                _events.tryEmit(Event.OpenPlaylist(existing.id))
+                return@launch
+            }
+            val playlistId = UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
+            playlistRepo.create(
+                Playlist(
+                    id = playlistId,
+                    name = playlistName,
+                    coverPath = null,
+                    createdAt = now,
+                    updatedAt = now,
+                )
+            )
+            audioFiles.forEach { item ->
+                playlistRepo.saveMediaAndAddToPlaylist(item, playlistId)
+            }
+            _events.tryEmit(Event.OpenPlaylist(playlistId))
         }
     }
 

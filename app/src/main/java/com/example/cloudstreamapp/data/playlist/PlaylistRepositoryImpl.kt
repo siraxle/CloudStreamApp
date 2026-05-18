@@ -157,8 +157,10 @@ class PlaylistRepositoryImpl @Inject constructor(
 
     suspend fun saveMediaAndAddToPlaylist(cloudItem: CloudItem, playlistId: String): Boolean {
         val mediaId = cloudItem.id
-        val existing = metadataDao.get(cloudItem.path.sourceId, cloudItem.path.relativePath)
-        if (existing == null) {
+        // Dedup by ID, not by (sourceId, path): multiple files in the same torrent folder
+        // share the same (sourceId, relativePath) pair, so the path-based lookup would
+        // incorrectly skip metadata insertion for all files after the first in that folder.
+        if (metadataDao.getById(mediaId) == null) {
             metadataDao.insert(cloudItem.toMetadataEntity())
         }
         val currentItems = playlistDao.getItemsForPlaylist(playlistId).first()

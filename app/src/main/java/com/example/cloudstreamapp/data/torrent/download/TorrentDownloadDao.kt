@@ -13,6 +13,12 @@ interface TorrentDownloadDao {
     @Query("SELECT * FROM torrent_downloads ORDER BY downloadedAt DESC")
     fun getAll(): Flow<List<TorrentDownloadEntity>>
 
+    @Query("SELECT * FROM torrent_downloads WHERE torrentName = :torrentName ORDER BY folderPath, fileName")
+    fun getByTorrent(torrentName: String): Flow<List<TorrentDownloadEntity>>
+
+    @Query("SELECT * FROM torrent_downloads WHERE infoHash = :infoHash ORDER BY folderPath, fileName")
+    suspend fun getByInfoHash(infoHash: String): List<TorrentDownloadEntity>
+
     @Query("SELECT * FROM torrent_downloads WHERE id = :id")
     suspend fun findById(id: String): TorrentDownloadEntity?
 
