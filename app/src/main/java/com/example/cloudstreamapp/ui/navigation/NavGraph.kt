@@ -17,6 +17,7 @@ import com.example.cloudstreamapp.ui.playlist.PlaylistsScreen
 import com.example.cloudstreamapp.ui.settings.SettingsScreen
 import com.example.cloudstreamapp.ui.torrent.TorrentBrowserScreen
 import com.example.cloudstreamapp.ui.torrent.downloads.TorrentDownloadsScreen
+import com.example.cloudstreamapp.ui.torrent.downloads.TorrentGroupDetailScreen
 
 @Composable
 fun NavGraph(
@@ -192,14 +193,36 @@ fun NavGraph(
         composable(Screen.TorrentDownloads.route) {
             TorrentDownloadsScreen(
                 onBack = { navController.popBackStack() },
+                onOpenGroup = { torrentName ->
+                    navController.navigate(Screen.TorrentGroupDetail.createRoute(torrentName))
+                },
+                onOpenPlaylist = { playlistId ->
+                    navController.navigate(Screen.PlaylistDetail.createRoute(playlistId))
+                },
+            )
+        }
+
+        composable(
+            route = Screen.TorrentGroupDetail.route,
+            arguments = listOf(navArgument("encodedTorrentName") { type = NavType.StringType }),
+        ) {
+            TorrentGroupDetailScreen(
+                onBack = { navController.popBackStack() },
                 onPlayTrack = { entity ->
+                    // Navigate to FolderPlayer so the whole torrent group is queued.
+                    // Compute torrent root by walking up from the file's immediate parent
+                    // by the number of folderPath segments (e.g. "Disc1/SubDisc" = 2 levels).
+                    val folderDepth = if (entity.folderPath.isEmpty()) 0
+                        else entity.folderPath.split("/").count { it.isNotEmpty() }
+                    var torrentRoot = java.io.File(entity.localPath).parentFile
+                        ?: java.io.File(entity.localPath)
+                    repeat(folderDepth) { torrentRoot = torrentRoot.parentFile ?: torrentRoot }
                     navController.navigate(
-                        Screen.Player.createRoute(
+                        Screen.FolderPlayer.createRoute(
                             cloudType = "LOCAL",
-                            sourceUrl = entity.localPath,
-                            itemPath  = entity.fileName,
-                            itemName  = entity.fileName,
-                            mediaId   = "local:${entity.infoHash}:${entity.fileIndex}",
+                            sourceUrl = torrentRoot.absolutePath,
+                            folderPath = ".",
+                            mediaId   = entity.localPath,
                         )
                     ) { launchSingleTop = true }
                 },

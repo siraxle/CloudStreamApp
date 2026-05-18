@@ -26,7 +26,32 @@ class LocalFileCloudProvider @Inject constructor() : CloudProvider {
     override suspend fun resolve(url: String): CloudResult =
         CloudResult.Error("LOCAL provider does not support URL resolution")
 
-    override fun listFolder(path: CloudPath): Flow<List<CloudItem>> = flowOf(emptyList())
+    override fun listFolder(path: CloudPath): Flow<List<CloudItem>> {
+        val dir = java.io.File(path.sourceId)
+        if (!dir.isDirectory) return flowOf(emptyList())
+        return flowOf(walkDir(dir))
+    }
+
+    private fun walkDir(dir: java.io.File): List<CloudItem> {
+        val result = mutableListOf<CloudItem>()
+        dir.listFiles()?.sortedBy { it.name.lowercase() }?.forEach { f ->
+            when {
+                f.isFile -> result += CloudItem(
+                    id = f.absolutePath,
+                    name = f.name,
+                    path = CloudPath(
+                        sourceId = f.absolutePath,
+                        relativePath = f.absolutePath,
+                        cloudType = CloudType.LOCAL,
+                    ),
+                    type = CloudItem.ItemType.FILE,
+                    sizeBytes = f.length(),
+                )
+                f.isDirectory -> result += walkDir(f)
+            }
+        }
+        return result
+    }
 
     override suspend fun getStreamUrl(item: CloudItem): String {
         val path = item.path.sourceId
