@@ -92,6 +92,7 @@ class TorrentDownloadManager @Inject constructor(
         fileName: String,
         sizeBytes: Long,
         torrentName: String,
+        folderPath: String = "",
     ) {
         val key = "$infoHash:$fileIndex"
         when (_progress.value[key]) {
@@ -120,7 +121,7 @@ class TorrentDownloadManager @Inject constructor(
                 while (!srcFile.exists() && System.currentTimeMillis() < deadline) delay(100)
                 check(srcFile.exists()) { "Downloaded file missing at ${srcFile.path}" }
 
-                val destFile = resolveDestFile(torrentName, fileName)
+                val destFile = resolveDestFile(torrentName, folderPath, fileName)
                 srcFile.copyTo(destFile, overwrite = true)
 
                 db.torrentDownloadDao().insert(
@@ -132,6 +133,7 @@ class TorrentDownloadManager @Inject constructor(
                         fileName = fileName,
                         sizeBytes = sizeBytes,
                         torrentName = torrentName,
+                        folderPath = folderPath,
                     )
                 )
                 setProgress(key, DownloadProgress.Done(destFile.absolutePath))
@@ -157,14 +159,57 @@ class TorrentDownloadManager @Inject constructor(
             .filter { f -> folderPath.isEmpty() || f.relativePath.startsWith(prefix) }
             .filter { f -> f.name.isAudioFile() }
             .forEach { file ->
+                // relativePath = "TorrentRoot/Sub/File.mp3" → fileFolderPath = "Sub"
+                val parentDir = file.relativePath.substringBeforeLast("/", "")
+                val fileFolderPath = parentDir.substringAfter("/", "")
                 downloadFile(
                     infoHash = infoHash,
                     fileIndex = file.index,
                     fileName = file.name,
                     sizeBytes = file.sizeBytes,
                     torrentName = torrentName,
+                    folderPath = fileFolderPath,
                 )
             }
+    }
+
+    /**
+     * Cancels all active downloads for audio files under [folderPath] within [infoHash].
+     * Pass [folderPath] = "" to cancel every active download in the torrent.
+     */
+    fun cancelFolder(infoHash: String, folderPath: String) {
+        val prefix = if (folderPath.isEmpty()) "" else "$folderPath/"
+        engine.listFiles(infoHash)
+            .filter { f -> folderPath.isEmpty() || f.relativePath.startsWith(prefix) }
+            .filter { f -> f.name.isAudioFile() }
+            .forEach { file -> cancelDownload(infoHash, file.index) }
+    }
+
+    /**
+     * Returns the set of folder paths (e.g. "Album", "Album/Disc1") that contain
+     * at least one Queued or Downloading file for [infoHash]. Used to show cancel
+     * buttons on folder items in the browser.
+     */
+    fun activeFolderPaths(infoHash: String): Set<String> {
+        val activeIndices = _progress.value
+            .filterValues { it is DownloadProgress.Queued || it is DownloadProgress.Downloading }
+            .keys
+            .filter { it.startsWith("$infoHash:") }
+            .mapNotNull { it.removePrefix("$infoHash:").toIntOrNull() }
+            .toSet()
+
+        if (activeIndices.isEmpty()) return emptySet()
+
+        return engine.listFiles(infoHash)
+            .filter { it.index in activeIndices }
+            .flatMap { file ->
+                // Build all ancestor folder paths for this file.
+                // file.relativePath = "TorrentRoot/SubFolder/Track.mp3"
+                // → folder paths: "TorrentRoot", "TorrentRoot/SubFolder"
+                val segments = file.relativePath.split("/").dropLast(1)
+                (1..segments.size).map { n -> segments.take(n).joinToString("/") }
+            }
+            .toSet()
     }
 
     /** Cancels an active download and clears its progress entry. */
@@ -191,8 +236,11 @@ class TorrentDownloadManager @Inject constructor(
         _progress.update { it + (key to state) }
     }
 
-    private fun resolveDestFile(torrentName: String, fileName: String): File {
-        val dir = File(downloadDir, sanitize(torrentName)).also { it.mkdirs() }
+    private fun resolveDestFile(torrentName: String, folderPath: String, fileName: String): File {
+        val torrentDir = File(downloadDir, sanitize(torrentName))
+        val dir = if (folderPath.isEmpty()) torrentDir
+                  else folderPath.split("/").fold(torrentDir) { acc, seg -> File(acc, sanitize(seg)) }
+        dir.mkdirs()
         return File(dir, sanitize(fileName))
     }
 

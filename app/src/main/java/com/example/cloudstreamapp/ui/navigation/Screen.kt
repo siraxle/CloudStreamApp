@@ -47,4 +47,7 @@ sealed class Screen(val route: String) {
     }
     object TorrentBrowser : Screen("torrent")
     object TorrentDownloads : Screen("torrent/downloads")
+    object TorrentGroupDetail : Screen("torrent/downloads/{encodedTorrentName}") {
+        fun createRoute(torrentName: String) = "torrent/downloads/${Uri.encode(torrentName)}"
+    }
 }

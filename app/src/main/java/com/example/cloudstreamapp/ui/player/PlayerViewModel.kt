@@ -110,8 +110,9 @@ class PlayerViewModel @Inject constructor(
         if (isTorrentStream) {
             // infoHash is embedded in the magnetUri (sourceUrl), not in folderPath.
             // folderPath now holds the subfolder path within the torrent ("" = root).
-            val magnetUri = savedStateHandle.get<String>("encodedSourceUrl") ?: ""
-            val infoHash = extractInfoHash(magnetUri) ?: ""
+            val sourceUrl = savedStateHandle.get<String>("encodedSourceUrl") ?: ""
+            val infoHash = extractInfoHash(sourceUrl)
+                ?: if (sourceUrl.startsWith("torrent:")) sourceUrl.removePrefix("torrent:") else ""
             if (infoHash.isNotEmpty()) {
                 viewModelScope.launch {
                     torrentEngine.downloadProgressFlow(infoHash).collect { progress ->

@@ -51,10 +51,13 @@ class TorrentCloudProvider @Inject constructor(
      * [path.relativePath] = folder path within the torrent ("" = root, "Album/Disc1" = subfolder)
      */
     override fun listFolder(path: CloudPath): Flow<List<CloudItem>> = flow {
-        val magnetUri = path.sourceId
-        val infoHash = extractInfoHash(magnetUri) ?: path.relativePath
+        val sourceId = path.sourceId
+        // sourceId is either a magnet: URI or "torrent:{infoHash}" (loaded from .torrent file)
+        val infoHash = extractInfoHash(sourceId)
+            ?: if (sourceId.startsWith("torrent:")) sourceId.removePrefix("torrent:")
+               else path.relativePath
         val folderPath = if (path.relativePath == infoHash) "" else path.relativePath
-        emit(listFolderItems(infoHash, folderPath, magnetUri))
+        emit(listFolderItems(infoHash, folderPath, sourceId))
     }.flowOn(Dispatchers.IO)
 
     override suspend fun getStreamUrl(item: CloudItem): String {
@@ -62,6 +65,20 @@ class TorrentCloudProvider @Inject constructor(
         val infoHash = parts[0]
         val fileIndex = parts[1].toInt()
         return "http://127.0.0.1:${TorrentHttpServer.PORT}/stream/$infoHash/$fileIndex"
+    }
+
+    /**
+     * Loads a .torrent file from [bytes], starts download, and returns a
+     * [CloudResult.FolderResult] with root-level items. No DHT fetch needed.
+     */
+    suspend fun resolveTorrentBytes(bytes: ByteArray, fileName: String): CloudResult = try {
+        val infoHash = engine.addTorrentBytes(bytes)
+        val sourceId = "torrent:$infoHash"
+        val path = CloudPath(sourceId = sourceId, relativePath = infoHash, cloudType = CloudType.TORRENT)
+        val items = listFolderItems(infoHash, "", sourceId)
+        CloudResult.FolderResult(path = path, items = items)
+    } catch (e: Exception) {
+        CloudResult.Error(e.message ?: "Could not read torrent file", cause = e)
     }
 
     /**

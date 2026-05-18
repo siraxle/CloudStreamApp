@@ -1,6 +1,8 @@
 package com.example.cloudstreamapp.ui.torrent
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +30,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.Search
@@ -51,6 +54,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,6 +78,19 @@ fun TorrentBrowserScreen(
     val query by viewModel.query.collectAsState()
     val category by viewModel.category.collectAsState()
     val downloadProgress by viewModel.downloadProgress.collectAsState()
+    val context = LocalContext.current
+
+    val torrentFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val bytes = try {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        } catch (_: Exception) { null }
+        if (bytes == null) return@rememberLauncherForActivityResult
+        val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "file.torrent"
+        viewModel.openTorrentFile(bytes, fileName)
+    }
 
     // Back inside folder hierarchy → navigate up; at root → back to results
     BackHandler(enabled = uiState is TorrentBrowserViewModel.UiState.FileList) {
@@ -139,6 +156,9 @@ fun TorrentBrowserScreen(
                     IconButton(onClick = { viewModel.search() }) {
                         Icon(Icons.Default.Search, contentDescription = "Найти")
                     }
+                    IconButton(onClick = { torrentFileLauncher.launch("*/*") }) {
+                        Icon(Icons.Default.FolderOpen, contentDescription = "Открыть .torrent файл")
+                    }
                 }
                 Row(
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -172,18 +192,23 @@ fun TorrentBrowserScreen(
                 is TorrentBrowserViewModel.UiState.ResolvingMagnet ->
                     CenteredProgress("Получение метаданных…\n${state.name}")
 
-                is TorrentBrowserViewModel.UiState.FileList -> FileListContent(
-                    state = state,
-                    downloadProgressMap = downloadProgress,
-                    onPlayFile = onPlayFile,
-                    onNavigateToFolder = viewModel::navigateToFolder,
-                    onNavigateToBreadcrumb = viewModel::navigateToBreadcrumb,
-                    onLoadPage = viewModel::loadPage,
-                    onDownloadFile = viewModel::downloadFile,
-                    onDownloadFolder = viewModel::downloadFolderItem,
-                    onCancelDownload = viewModel::cancelDownload,
-                    onDeleteDownload = viewModel::deleteDownload,
-                )
+                is TorrentBrowserViewModel.UiState.FileList -> {
+                    val activeFolderPaths by viewModel.activeFolderDownloadPaths.collectAsState()
+                    FileListContent(
+                        state = state,
+                        downloadProgressMap = downloadProgress,
+                        activeFolderDownloadPaths = activeFolderPaths,
+                        onPlayFile = onPlayFile,
+                        onNavigateToFolder = viewModel::navigateToFolder,
+                        onNavigateToBreadcrumb = viewModel::navigateToBreadcrumb,
+                        onLoadPage = viewModel::loadPage,
+                        onDownloadFile = viewModel::downloadFile,
+                        onDownloadFolder = viewModel::downloadFolderItem,
+                        onCancelDownload = viewModel::cancelDownload,
+                        onCancelFolderDownload = viewModel::cancelFolderDownload,
+                        onDeleteDownload = viewModel::deleteDownload,
+                    )
+                }
 
                 is TorrentBrowserViewModel.UiState.Error -> ErrorContent(
                     message = state.message,
@@ -215,6 +240,12 @@ private fun IdleHint() {
         ) {
             Text("Введите название или magnet-ссылку", style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.height(8.dp))
+            Text(
+                "Или откройте .torrent файл с устройства кнопкой справа от строки поиска",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(4.dp))
             Text(
                 "Источники включаются в Настройках → Торрент-источники",
                 style = MaterialTheme.typography.bodySmall,
@@ -309,6 +340,7 @@ private fun TorrentResultItem(result: TorrentResult, onClick: () -> Unit) {
 private fun FileListContent(
     state: TorrentBrowserViewModel.UiState.FileList,
     downloadProgressMap: Map<String, DownloadProgress>,
+    activeFolderDownloadPaths: Set<String>,
     onPlayFile: (item: CloudItem, magnetUri: String, infoHash: String) -> Unit,
     onNavigateToFolder: (CloudItem) -> Unit,
     onNavigateToBreadcrumb: (Int) -> Unit,
@@ -316,6 +348,7 @@ private fun FileListContent(
     onDownloadFile: (CloudItem) -> Unit,
     onDownloadFolder: (CloudItem) -> Unit,
     onCancelDownload: (CloudItem) -> Unit,
+    onCancelFolderDownload: (CloudItem) -> Unit,
     onDeleteDownload: (CloudItem) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
@@ -333,8 +366,10 @@ private fun FileListContent(
                         if (item.type == CloudItem.ItemType.DIRECTORY) {
                             FolderItem(
                                 item = item,
+                                isDownloading = item.path.relativePath in activeFolderDownloadPaths,
                                 onClick = { onNavigateToFolder(item) },
                                 onDownload = { onDownloadFolder(item) },
+                                onCancelDownload = { onCancelFolderDownload(item) },
                             )
                         } else {
                             FileItem(
@@ -410,7 +445,13 @@ private fun BreadcrumbRow(
 }
 
 @Composable
-private fun FolderItem(item: CloudItem, onClick: () -> Unit, onDownload: () -> Unit) {
+private fun FolderItem(
+    item: CloudItem,
+    isDownloading: Boolean,
+    onClick: () -> Unit,
+    onDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
+) {
     ListItem(
         modifier = Modifier.clickable(onClick = onClick),
         headlineContent = {
@@ -429,13 +470,24 @@ private fun FolderItem(item: CloudItem, onClick: () -> Unit, onDownload: () -> U
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(0.dp),
             ) {
-                IconButton(onClick = onDownload, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        Icons.Default.Download,
-                        contentDescription = "Скачать папку",
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.secondary,
-                    )
+                if (isDownloading) {
+                    IconButton(onClick = onCancelDownload, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Отменить скачивание папки",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                } else {
+                    IconButton(onClick = onDownload, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            Icons.Default.Download,
+                            contentDescription = "Скачать папку",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.secondary,
+                        )
+                    }
                 }
                 Icon(
                     Icons.AutoMirrored.Filled.KeyboardArrowRight,

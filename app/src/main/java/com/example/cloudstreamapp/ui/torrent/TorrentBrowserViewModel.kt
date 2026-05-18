@@ -16,6 +16,7 @@ import com.example.cloudstreamapp.domain.torrent.TorrentResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -242,23 +243,60 @@ class TorrentBrowserViewModel @Inject constructor(
 
     fun currentMagnetUri(): String = currentMagnetUri
 
+    /** Opens a .torrent file from raw bytes, parses metadata, and shows the file list. */
+    fun openTorrentFile(bytes: ByteArray, fileName: String) {
+        val torrentName = fileName.removeSuffix(".torrent")
+        _uiState.value = UiState.ResolvingMagnet(torrentName)
+        viewModelScope.launch {
+            runCatching { provider.resolveTorrentBytes(bytes, fileName) }
+                .onSuccess { cloudResult ->
+                    when (cloudResult) {
+                        is CloudResult.FolderResult -> {
+                            val infoHash = cloudResult.path.relativePath
+                            currentMagnetUri = "torrent:$infoHash"
+                            loadFolderPage(infoHash, "torrent:$infoHash", torrentName, "", 1)
+                        }
+                        is CloudResult.Error -> _uiState.value = UiState.Error(cloudResult.message)
+                        else -> _uiState.value = UiState.Error("Unexpected result type")
+                    }
+                }
+                .onFailure { _uiState.value = UiState.Error(it.message ?: "Failed to open torrent file") }
+        }
+    }
+
     // ── Download actions ──────────────────────────────────────────────────────
 
     /** Live map of download progress keyed by "${infoHash}:${fileIndex}". */
     val downloadProgress: StateFlow<Map<String, DownloadProgress>> =
         downloadManager.progress.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
+    /**
+     * Set of folder paths (e.g. "Album", "Album/Disc1") that have at least one
+     * Queued or Downloading file in the current torrent. Recomputed on every
+     * progress update so FolderItems can show a cancel button reactively.
+     */
+    val activeFolderDownloadPaths: StateFlow<Set<String>> = downloadManager.progress
+        .map { _ ->
+            val state = _uiState.value as? UiState.FileList ?: return@map emptySet()
+            downloadManager.activeFolderPaths(state.infoHash)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
     /** Starts downloading a single audio file to the device's Music folder. */
     fun downloadFile(item: CloudItem) {
         val current = _uiState.value as? UiState.FileList ?: return
         val parts = item.id.split(":")
         if (parts.size < 2) return
+        // relativePath = "TorrentRoot/Sub/File.mp3" → folderPath = "Sub"
+        val parentDir = item.path.relativePath.substringBeforeLast("/", "")
+        val folderPath = parentDir.substringAfter("/", "")
         downloadManager.downloadFile(
             infoHash = parts[0],
             fileIndex = parts[1].toInt(),
             fileName = item.name,
             sizeBytes = item.sizeBytes ?: 0L,
             torrentName = current.torrentName,
+            folderPath = folderPath,
         )
     }
 
@@ -269,6 +307,15 @@ class TorrentBrowserViewModel @Inject constructor(
             infoHash = current.infoHash,
             folderPath = folderItem.path.relativePath,
             torrentName = current.torrentName,
+        )
+    }
+
+    /** Cancels all active downloads inside a folder item (and its subfolders). */
+    fun cancelFolderDownload(folderItem: CloudItem) {
+        val current = _uiState.value as? UiState.FileList ?: return
+        downloadManager.cancelFolder(
+            infoHash = current.infoHash,
+            folderPath = folderItem.path.relativePath,
         )
     }
 

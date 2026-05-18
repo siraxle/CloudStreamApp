@@ -132,6 +132,36 @@ class LibtorrentEngine @Inject constructor(
         infoHash
     }
 
+    /**
+     * Loads a torrent from raw .torrent bytes (no DHT metadata fetch needed),
+     * starts sequential download, and returns the lowercase hex info hash.
+     */
+    suspend fun addTorrentBytes(bytes: ByteArray): String = withContext(Dispatchers.IO) {
+        val s = session ?: throw IllegalStateException(
+            "libtorrent4j native library is not available on this device. " +
+            "Torrent streaming requires an arm64-v8a, armeabi-v7a, or x86_64 device."
+        )
+        val ti = TorrentInfo.bdecode(bytes)
+        val infoHash = ti.infoHash().toHex()
+
+        if (states.containsKey(infoHash)) return@withContext infoHash
+
+        s.download(ti, savePath)
+        val handle = waitForHandle(ti.infoHash(), timeoutMs = 5_000L)
+            ?: throw RuntimeException("TorrentHandle not found after starting download")
+
+        handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
+        val n = ti.numPieces()
+        (0 until minOf(5, n)).forEach { handle.piecePriority(it, Priority.TOP_PRIORITY) }
+        (maxOf(0, n - 5) until n).forEach { handle.piecePriority(it, Priority.TOP_PRIORITY) }
+
+        states[infoHash] = ActiveTorrent(handle, ti, ConcurrentSkipListSet())
+        pieceWaiters[infoHash] = ConcurrentHashMap()
+
+        Log.i(TAG, "Ready (from .torrent file): $infoHash — ${ti.numFiles()} files, $n pieces")
+        infoHash
+    }
+
     /** Lists all files in a resolved torrent. */
     fun listFiles(infoHash: String): List<TorrentFile> {
         val state = states[infoHash] ?: return emptyList()
