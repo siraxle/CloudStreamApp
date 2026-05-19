@@ -21,6 +21,7 @@ import com.example.cloudstreamapp.ui.torrent.TorrentBrowserScreen
 import com.example.cloudstreamapp.ui.torrent.downloads.TorrentDownloadsScreen
 import com.example.cloudstreamapp.ui.torrent.downloads.TorrentGroupDetailScreen
 import com.example.cloudstreamapp.ui.torrent.local.LocalTorrentsScreen
+import com.example.cloudstreamapp.ui.torrent.saved.SavedTorrentsScreen
 
 @Composable
 fun NavGraph(
@@ -180,6 +181,10 @@ fun NavGraph(
             val localTorrentToOpen by backStackEntry.savedStateHandle
                 .getStateFlow("open_local_torrent_hash", "")
                 .collectAsState()
+            // Receive magnetUri forwarded back from SavedTorrentsScreen
+            val savedMagnetToOpen by backStackEntry.savedStateHandle
+                .getStateFlow("open_saved_magnet", "")
+                .collectAsState()
 
             TorrentBrowserScreen(
                 onPlayFile = { item, magnetUri, _ ->
@@ -198,12 +203,19 @@ fun NavGraph(
                 onOpenLocalTorrents = {
                     navController.navigate(Screen.LocalTorrents.route)
                 },
+                onOpenSavedTorrents = {
+                    navController.navigate(Screen.SavedTorrents.route)
+                },
                 onOpenPlaylist = { playlistId ->
                     navController.navigate(Screen.PlaylistDetail.createRoute(playlistId))
                 },
                 localTorrentToOpen = localTorrentToOpen,
                 onLocalTorrentConsumed = {
                     backStackEntry.savedStateHandle["open_local_torrent_hash"] = ""
+                },
+                savedMagnetToOpen = savedMagnetToOpen,
+                onSavedMagnetConsumed = {
+                    backStackEntry.savedStateHandle["open_saved_magnet"] = ""
                 },
             )
         }
@@ -231,6 +243,18 @@ fun NavGraph(
                 },
                 onOpenPlaylist = { playlistId ->
                     navController.navigate(Screen.PlaylistDetail.createRoute(playlistId))
+                },
+            )
+        }
+
+        composable(Screen.SavedTorrents.route) {
+            SavedTorrentsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenMagnet = { magnetUri ->
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("open_saved_magnet", magnetUri)
+                    navController.popBackStack()
                 },
             )
         }

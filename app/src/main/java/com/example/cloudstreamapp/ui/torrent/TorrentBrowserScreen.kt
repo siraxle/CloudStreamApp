@@ -26,6 +26,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
@@ -49,7 +51,6 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -76,9 +77,12 @@ fun TorrentBrowserScreen(
     onPlayFile: (item: CloudItem, magnetUri: String, infoHash: String) -> Unit,
     onOpenDownloads: () -> Unit = {},
     onOpenLocalTorrents: () -> Unit = {},
+    onOpenSavedTorrents: () -> Unit = {},
     onOpenPlaylist: (String) -> Unit = {},
     localTorrentToOpen: String = "",
     onLocalTorrentConsumed: () -> Unit = {},
+    savedMagnetToOpen: String = "",
+    onSavedMagnetConsumed: () -> Unit = {},
     viewModel: TorrentBrowserViewModel = hiltViewModel(),
 ) {
     // Open a torrent forwarded from LocalTorrentsScreen
@@ -86,6 +90,14 @@ fun TorrentBrowserScreen(
         if (localTorrentToOpen.isNotEmpty()) {
             viewModel.openLocalTorrent(localTorrentToOpen)
             onLocalTorrentConsumed()
+        }
+    }
+
+    // Open a magnet forwarded from SavedTorrentsScreen
+    LaunchedEffect(savedMagnetToOpen) {
+        if (savedMagnetToOpen.isNotEmpty()) {
+            viewModel.openMagnet(savedMagnetToOpen)
+            onSavedMagnetConsumed()
         }
     }
 
@@ -101,6 +113,7 @@ fun TorrentBrowserScreen(
     val query by viewModel.query.collectAsState()
     val category by viewModel.category.collectAsState()
     val downloadProgress by viewModel.downloadProgress.collectAsState()
+    val savedHashes by viewModel.savedHashes.collectAsState()
     val context = LocalContext.current
 
     val torrentFileLauncher = rememberLauncherForActivityResult(
@@ -152,6 +165,15 @@ fun TorrentBrowserScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenSavedTorrents) {
+                        Icon(
+                            if (savedHashes.isNotEmpty()) Icons.Default.Bookmark
+                            else Icons.Default.BookmarkBorder,
+                            contentDescription = "Сохранённые торренты",
+                            tint = if (savedHashes.isNotEmpty()) MaterialTheme.colorScheme.primary
+                                   else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     IconButton(onClick = onOpenLocalTorrents) {
                         Icon(
                             Icons.Default.Storage,
@@ -233,8 +255,11 @@ fun TorrentBrowserScreen(
 
                 is TorrentBrowserViewModel.UiState.SearchResults -> SearchResultsContent(
                     state = state,
+                    savedHashes = savedHashes,
                     onFilterSource = viewModel::filterBySource,
                     onOpenResult = viewModel::openTorrentResult,
+                    onSaveResult = viewModel::saveResult,
+                    onUnsaveResult = viewModel::unsaveResult,
                 )
 
                 is TorrentBrowserViewModel.UiState.ResolvingMagnet ->
@@ -319,8 +344,11 @@ private fun ErrorContent(message: String, onRetry: () -> Unit) {
 @Composable
 private fun SearchResultsContent(
     state: TorrentBrowserViewModel.UiState.SearchResults,
+    savedHashes: Set<String>,
     onFilterSource: (TorrentSource?) -> Unit,
     onOpenResult: (TorrentResult) -> Unit,
+    onSaveResult: (TorrentResult) -> Unit,
+    onUnsaveResult: (String) -> Unit,
 ) {
     Column {
         if (state.availableSources.size > 1) {
@@ -352,7 +380,15 @@ private fun SearchResultsContent(
         } else {
             LazyColumn {
                 items(state.results, key = { it.infoHash.ifEmpty { it.magnetUri } }) { result ->
-                    TorrentResultItem(result = result, onClick = { onOpenResult(result) })
+                    TorrentResultItem(
+                        result = result,
+                        isSaved = result.infoHash in savedHashes,
+                        onClick = { onOpenResult(result) },
+                        onToggleSave = {
+                            if (result.infoHash in savedHashes) onUnsaveResult(result.infoHash)
+                            else onSaveResult(result)
+                        },
+                    )
                     HorizontalDivider()
                 }
             }
@@ -361,7 +397,12 @@ private fun SearchResultsContent(
 }
 
 @Composable
-private fun TorrentResultItem(result: TorrentResult, onClick: () -> Unit) {
+private fun TorrentResultItem(
+    result: TorrentResult,
+    isSaved: Boolean,
+    onClick: () -> Unit,
+    onToggleSave: () -> Unit,
+) {
     ListItem(
         modifier = Modifier.clickable(onClick = onClick),
         headlineContent = {
@@ -369,6 +410,11 @@ private fun TorrentResultItem(result: TorrentResult, onClick: () -> Unit) {
         },
         supportingContent = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    result.source,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (result.sizeBytes > 0) {
                     Text(result.sizeBytes.toHumanReadableSize(),
                         style = MaterialTheme.typography.bodySmall)
@@ -380,7 +426,14 @@ private fun TorrentResultItem(result: TorrentResult, onClick: () -> Unit) {
             }
         },
         trailingContent = {
-            SuggestionChip(onClick = {}, label = { Text(result.source) })
+            IconButton(onClick = onToggleSave) {
+                Icon(
+                    if (isSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                    contentDescription = if (isSaved) "Убрать из сохранённых" else "Сохранить",
+                    tint = if (isSaved) MaterialTheme.colorScheme.primary
+                           else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         },
     )
 }

@@ -51,4 +51,5 @@ sealed class Screen(val route: String) {
         fun createRoute(torrentName: String) = "torrent/downloads/${Uri.encode(torrentName)}"
     }
     object LocalTorrents : Screen("torrent/local")
+    object SavedTorrents : Screen("torrent/saved")
 }

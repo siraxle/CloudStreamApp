@@ -9,6 +9,7 @@ import com.example.cloudstreamapp.data.torrent.TorrentCloudProvider
 import com.example.cloudstreamapp.data.torrent.TorrentRepository
 import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadManager
 import com.example.cloudstreamapp.data.torrent.local.LocalTorrentRepository
+import com.example.cloudstreamapp.data.torrent.saved.SavedTorrentRepository
 import com.example.cloudstreamapp.data.torrent.provider.ContentCategory
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 import com.example.cloudstreamapp.domain.model.CacheStatus
@@ -42,6 +43,7 @@ class TorrentBrowserViewModel @Inject constructor(
     private val repository: TorrentRepository,
     private val downloadManager: TorrentDownloadManager,
     private val localTorrentRepo: LocalTorrentRepository,
+    private val savedTorrentRepo: SavedTorrentRepository,
     private val playlistRepo: PlaylistRepositoryImpl,
 ) : ViewModel() {
 
@@ -405,6 +407,20 @@ class TorrentBrowserViewModel @Inject constructor(
             }
             _events.tryEmit(Event.OpenPlaylist(playlistId))
         }
+    }
+
+    // ── Saved torrents ────────────────────────────────────────────────────────
+
+    /** Set of infoHash values the user has bookmarked. Updated in real time from Room. */
+    val savedHashes: StateFlow<Set<String>> = savedTorrentRepo.getAllHashes()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    fun saveResult(result: TorrentResult) {
+        viewModelScope.launch { savedTorrentRepo.save(result) }
+    }
+
+    fun unsaveResult(infoHash: String) {
+        viewModelScope.launch { savedTorrentRepo.delete(infoHash) }
     }
 
     // ── Download actions ──────────────────────────────────────────────────────

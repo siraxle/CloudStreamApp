@@ -22,6 +22,8 @@ import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadDao
 import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadEntity
 import com.example.cloudstreamapp.data.torrent.local.LocalTorrentDao
 import com.example.cloudstreamapp.data.torrent.local.LocalTorrentEntity
+import com.example.cloudstreamapp.data.torrent.saved.SavedTorrentDao
+import com.example.cloudstreamapp.data.torrent.saved.SavedTorrentEntity
 
 @Database(
     entities = [
@@ -35,8 +37,9 @@ import com.example.cloudstreamapp.data.torrent.local.LocalTorrentEntity
         FavoriteTrackEntity::class,
         TorrentDownloadEntity::class,
         LocalTorrentEntity::class,
+        SavedTorrentEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -48,6 +51,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun favoritePlaylistDao(): FavoritePlaylistDao
     abstract fun torrentDownloadDao(): TorrentDownloadDao
     abstract fun localTorrentDao(): LocalTorrentDao
+    abstract fun savedTorrentDao(): SavedTorrentDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -134,6 +138,28 @@ abstract class AppDatabase : RoomDatabase() {
                         addedAt INTEGER NOT NULL
                     )
                     """.trimIndent()
+                )
+            }
+        }
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS saved_torrents (
+                        infoHash TEXT NOT NULL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        magnetUri TEXT NOT NULL,
+                        sizeBytes INTEGER NOT NULL,
+                        seeders INTEGER NOT NULL,
+                        leechers INTEGER NOT NULL,
+                        source TEXT NOT NULL,
+                        savedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_saved_torrents_savedAt ON saved_torrents(savedAt)"
                 )
             }
         }
