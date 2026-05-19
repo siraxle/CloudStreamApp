@@ -3,11 +3,9 @@ package com.example.cloudstreamapp.data.torrent
 import com.example.cloudstreamapp.data.torrent.provider.NyaaProvider
 import com.example.cloudstreamapp.data.torrent.provider.PirateBayProvider
 import com.example.cloudstreamapp.data.torrent.provider.Provider1337x
-import com.example.cloudstreamapp.data.torrent.provider.RuTrackerProvider
 import com.example.cloudstreamapp.data.torrent.provider.TorrentProviderConfig
 import com.example.cloudstreamapp.data.torrent.provider.ContentCategory
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
-import com.example.cloudstreamapp.data.torrent.provider.Torrentz2Provider
 import com.example.cloudstreamapp.data.torrent.provider.extractInfoHash
 import com.example.cloudstreamapp.domain.torrent.TorrentResult
 import kotlinx.coroutines.async
@@ -23,13 +21,11 @@ class TorrentRepository @Inject constructor(
     private val pirateBay: PirateBayProvider,
     private val nyaa: NyaaProvider,
     private val x1337: Provider1337x,
-    private val torrentz2: Torrentz2Provider,
-    private val ruTracker: RuTrackerProvider,
 ) {
 
     /**
      * Searches all enabled providers in parallel, resolves placeholder magnet URIs
-     * (1337x, RuTracker), deduplicates by info hash, and returns the merged list
+     * (1337x), deduplicates by info hash, and returns the merged list
      * sorted by seeders descending.
      */
     suspend fun search(
@@ -46,8 +42,6 @@ class TorrentRepository @Inject constructor(
                         TorrentSource.PIRATE_BAY -> pirateBay.search(query, page, category)
                         TorrentSource.NYAA -> nyaa.search(query, page, category)
                         TorrentSource.X1337 -> x1337.search(query, page, category)
-                        TorrentSource.TORRENTZ2 -> torrentz2.search(query, page, category)
-                        TorrentSource.RUTRACKER -> ruTracker.search(query, page, category)
                     }
                 }.getOrElse { emptyList() }
             }
@@ -60,13 +54,6 @@ class TorrentRepository @Inject constructor(
             when {
                 result.source == TorrentSource.X1337.displayName && result.infoHash.isEmpty() -> {
                     val magnet = runCatching { x1337.resolveMagnet(result.magnetUri) }.getOrNull()
-                    if (magnet != null) {
-                        val hash = extractInfoHash(magnet) ?: ""
-                        result.copy(magnetUri = magnet, infoHash = hash)
-                    } else result
-                }
-                result.source == TorrentSource.RUTRACKER.displayName && result.infoHash.isEmpty() -> {
-                    val magnet = runCatching { ruTracker.resolveMagnet(result.magnetUri) }.getOrNull()
                     if (magnet != null) {
                         val hash = extractInfoHash(magnet) ?: ""
                         result.copy(magnetUri = magnet, infoHash = hash)

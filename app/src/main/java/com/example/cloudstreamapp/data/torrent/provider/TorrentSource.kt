@@ -4,6 +4,4 @@ enum class TorrentSource(val displayName: String, val requiresAuth: Boolean = fa
     PIRATE_BAY("TPB"),
     NYAA("Nyaa"),
     X1337("1377x"),
-    TORRENTZ2("Torrentz2"),
-    RUTRACKER("RuTracker", requiresAuth = true),
 }

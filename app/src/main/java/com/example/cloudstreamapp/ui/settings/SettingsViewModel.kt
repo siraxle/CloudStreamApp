@@ -6,7 +6,6 @@ import com.example.cloudstreamapp.core.cache.ImageCacheManager
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.data.torrent.auth.TorrentAuthStore
-import com.example.cloudstreamapp.data.torrent.provider.RuTrackerProvider
 import com.example.cloudstreamapp.data.torrent.provider.TorrentProviderConfig
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
@@ -28,7 +27,6 @@ class SettingsViewModel @Inject constructor(
     private val playlistRepo: PlaylistRepositoryImpl,
     private val torrentProviderConfig: TorrentProviderConfig,
     private val torrentAuthStore: TorrentAuthStore,
-    private val ruTrackerProvider: RuTrackerProvider,
 ) : ViewModel() {
 
     val cacheLimitBytes: StateFlow<Long> = settings.cacheLimitBytes
@@ -117,10 +115,7 @@ class SettingsViewModel @Inject constructor(
         _loginError.value = null
         _loginInProgress.value = true
         viewModelScope.launch {
-            val result = when (source) {
-                TorrentSource.RUTRACKER -> ruTrackerProvider.login(username, password)
-                else -> Result.failure(UnsupportedOperationException("Auth not supported for ${source.displayName}"))
-            }
+            val result = Result.failure<Unit>(UnsupportedOperationException("Auth not supported for ${source.displayName}"))
             _loginInProgress.value = false
             if (result.isSuccess) {
                 torrentAuthStore.saveAuth(source, username, password)
