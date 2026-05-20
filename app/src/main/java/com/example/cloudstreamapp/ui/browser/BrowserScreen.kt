@@ -306,8 +306,8 @@ private fun CloudItemCard(
                     )
                 }
                 Box(modifier = Modifier.align(Alignment.TopEnd)) {
-                    IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Действия", modifier = Modifier.size(16.dp))
+                    IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Действия", modifier = Modifier.size(18.dp))
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         DropdownMenuItem(

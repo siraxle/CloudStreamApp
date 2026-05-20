@@ -327,6 +327,8 @@ private fun AuthRequiredSourceItem(
 private fun SectionHeader(title: String) {
     Text(
         text = title,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
     )
 }
