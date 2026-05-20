@@ -6,10 +6,12 @@ import com.example.cloudstreamapp.core.cache.ImageCacheManager
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.data.torrent.auth.TorrentAuthStore
+import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadManager
 import com.example.cloudstreamapp.data.torrent.provider.TorrentProviderConfig
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @HiltViewModel
@@ -27,6 +30,7 @@ class SettingsViewModel @Inject constructor(
     private val playlistRepo: PlaylistRepositoryImpl,
     private val torrentProviderConfig: TorrentProviderConfig,
     private val torrentAuthStore: TorrentAuthStore,
+    private val torrentDownloadManager: TorrentDownloadManager,
 ) : ViewModel() {
 
     val cacheLimitBytes: StateFlow<Long> = settings.cacheLimitBytes
@@ -38,6 +42,9 @@ class SettingsViewModel @Inject constructor(
     private val _tempUsedCacheBytes = MutableStateFlow(0L)
     val tempUsedCacheBytes: StateFlow<Long> = _tempUsedCacheBytes.asStateFlow()
 
+    private val _torrentDownloadedBytes = MutableStateFlow(0L)
+    val torrentDownloadedBytes: StateFlow<Long> = _torrentDownloadedBytes.asStateFlow()
+
     init {
         refreshCacheUsage()
     }
@@ -45,6 +52,16 @@ class SettingsViewModel @Inject constructor(
     fun refreshCacheUsage() {
         _usedCacheBytes.value = cacheManager.permUsedBytes
         _tempUsedCacheBytes.value = cacheManager.tempUsedBytes
+        viewModelScope.launch {
+            _torrentDownloadedBytes.value = withContext(Dispatchers.IO) {
+                torrentDownloadManager.downloadDir
+                    .takeIf { it.exists() }
+                    ?.walkTopDown()
+                    ?.filter { it.isFile }
+                    ?.sumOf { it.length() }
+                    ?: 0L
+            }
+        }
     }
 
     val wifiOnlyPrefetch: StateFlow<Boolean> = settings.wifiOnlyPrefetch

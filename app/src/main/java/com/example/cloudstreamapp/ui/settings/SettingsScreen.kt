@@ -56,6 +56,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val cacheLimitBytes by viewModel.cacheLimitBytes.collectAsState()
     val usedCacheBytes by viewModel.usedCacheBytes.collectAsState()
     val tempUsedCacheBytes by viewModel.tempUsedCacheBytes.collectAsState()
+    val torrentDownloadedBytes by viewModel.torrentDownloadedBytes.collectAsState()
     val wifiOnly by viewModel.wifiOnlyPrefetch.collectAsState()
     var showClearCacheDialog by remember { mutableStateOf(false) }
     val pendingAuthSource by viewModel.pendingAuthSource.collectAsState()
@@ -79,7 +80,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         }
     }
 
-    val usedFraction = if (cacheLimitBytes > 0) (usedCacheBytes.toFloat() / cacheLimitBytes).coerceIn(0f, 1f) else 0f
+    val totalUsedBytes = usedCacheBytes + torrentDownloadedBytes
+    val usedFraction = if (cacheLimitBytes > 0) (totalUsedBytes.toFloat() / cacheLimitBytes).coerceIn(0f, 1f) else 0f
     val isNearLimit = usedFraction >= 0.8f
     val isCritical = usedFraction >= 0.95f
 
@@ -106,7 +108,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                             CACHE_PRESETS.forEach { (bytes, label) ->
                                 Button(
                                     onClick = { viewModel.setCacheLimit(bytes) },
-                                    enabled = usedCacheBytes <= bytes,
+                                    enabled = totalUsedBytes <= bytes,
                                     modifier = Modifier
                                         .weight(1f)
                                         .padding(end = 4.dp),
@@ -134,7 +136,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = "${formatBytes(usedCacheBytes)} / ${formatBytes(cacheLimitBytes)}",
+                                text = "${formatBytes(totalUsedBytes)} / ${formatBytes(cacheLimitBytes)}",
                                 modifier = Modifier.weight(1f),
                                 style = MaterialTheme.typography.bodyMedium,
                             )
@@ -147,6 +149,13 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                                     isNearLimit -> WarningOrange
                                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                                 },
+                            )
+                        }
+                        if (torrentDownloadedBytes > 0L) {
+                            Text(
+                                text = "Кэш: ${formatBytes(usedCacheBytes)}  •  Торренты: ${formatBytes(torrentDownloadedBytes)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
