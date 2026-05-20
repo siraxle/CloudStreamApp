@@ -102,6 +102,7 @@ fun PlayerScreen(
     val playbackSpeed by viewModel.playbackSpeed.collectAsState()
     val isTorrentStream = viewModel.isTorrentStream
     val torrentProgress by viewModel.torrentProgress.collectAsState()
+    val torrentPreBuffer by viewModel.torrentPreBuffer.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -113,6 +114,17 @@ fun PlayerScreen(
     }
 
     var showEqualizer by remember { mutableStateOf(false) }
+
+    // Show pre-buffer screen until enough initial pieces are downloaded.
+    // This prevents ExoPlayer from starting on empty data (crashes + flicker).
+    if (torrentPreBuffer is PlayerViewModel.TorrentPreBufferState.Buffering) {
+        TorrentPreBufferScreen(
+            progress = (torrentPreBuffer as PlayerViewModel.TorrentPreBufferState.Buffering).progress,
+            onBack = onBack,
+            snackbarHostState = snackbarHostState,
+        )
+        return
+    }
 
     if (state.hasVideo && player != null) {
         VideoPlayerContent(
@@ -449,6 +461,63 @@ private fun CoverImagePage(
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TorrentPreBufferScreen(
+    progress: Float,
+    onBack: () -> Unit,
+    snackbarHostState: SnackbarHostState,
+) {
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        topBar = {
+            TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                    }
+                },
+                title = { Text("Плеер") },
+            )
+        },
+    ) { padding ->
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 32.dp),
+        ) {
+            CircularProgressIndicator(modifier = Modifier.size(56.dp))
+            Spacer(Modifier.height(24.dp))
+            Text(
+                "Загрузка торрента…",
+                style = MaterialTheme.typography.titleMedium,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Скачиваем первые фрагменты файла перед воспроизведением",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(24.dp))
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth(0.75f),
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "${(progress * 100).toInt()}%",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

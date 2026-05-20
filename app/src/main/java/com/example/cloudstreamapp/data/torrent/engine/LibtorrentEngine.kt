@@ -302,6 +302,25 @@ class LibtorrentEngine @Inject constructor(
     }.flowOn(Dispatchers.IO)
 
     /**
+     * Emits pre-buffer progress [0.0..1.0] for the first [targetPieces] pieces of [fileIndex].
+     * The flow **completes** (doesn't loop) once all [targetPieces] pieces are downloaded,
+     * so callers can simply `collect` and proceed when it returns.
+     * Emits 1.0 immediately if the torrent/file state is unknown (skip pre-buffering).
+     */
+    fun waitForInitialPiecesFlow(infoHash: String, fileIndex: Int, targetPieces: Int): Flow<Float> = flow {
+        val state = states[infoHash]
+        if (state == null) { emit(1f); return@flow }
+        val (firstPiece, _) = filePieceRange(state, fileIndex) ?: run { emit(1f); return@flow }
+        val endPiece = firstPiece + targetPieces
+        while (true) {
+            val ready = state.downloadedPieces.subSet(firstPiece, endPiece).size
+            emit(minOf(ready.toFloat() / targetPieces, 1f))
+            if (ready >= targetPieces) return@flow
+            delay(200)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /**
      * Sets all pieces belonging to [fileIndex] to TOP_PRIORITY so the torrent
      * client focuses on downloading them before other pieces.
      */

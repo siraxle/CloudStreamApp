@@ -85,6 +85,9 @@ class PlayerViewModel @Inject constructor(
     private val _torrentProgress = MutableStateFlow<Float?>(null)
     val torrentProgress: StateFlow<Float?> = _torrentProgress.asStateFlow()
 
+    private val _torrentPreBuffer = MutableStateFlow<TorrentPreBufferState>(TorrentPreBufferState.Idle)
+    val torrentPreBuffer: StateFlow<TorrentPreBufferState> = _torrentPreBuffer.asStateFlow()
+
     // All image files found in the current folder — URLs resolved on-demand in the UI
     private val _coverImages = MutableStateFlow<List<CloudItem>>(emptyList())
     val coverImages: StateFlow<List<CloudItem>> = _coverImages.asStateFlow()
@@ -198,22 +201,52 @@ class PlayerViewModel @Inject constructor(
                     type = CloudItem.ItemType.FILE,
                 )
                 val url = runCatching { getStreamUrl(item) }.getOrNull()
-                withContext(Dispatchers.Main) {
-                    if (url != null) {
-                        playMediaItem(buildOnlineMediaItem(item, url))
-                    } else if (cacheManager.getCacheStatus(mediaId, null) == CacheStatus.CACHED) {
+                if (url != null) {
+                    val mediaItem = buildOnlineMediaItem(item, url)
+                    if (isTorrentStream) waitForTorrentBuffer(mediaId)
+                    withContext(Dispatchers.Main) {
+                        _torrentPreBuffer.value = TorrentPreBufferState.Idle
+                        playMediaItem(mediaItem)
+                    }
+                } else if (cacheManager.getCacheStatus(mediaId, null) == CacheStatus.CACHED) {
+                    withContext(Dispatchers.Main) {
                         playMediaItem(buildOfflineMediaItem(mediaId, itemName, item.path.toExtrasBundle()))
-                    } else {
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
                         _error.value = "Нет соединения, файл не скачан для офлайн-воспроизведения"
                     }
-                    triggerCoverScan(item.path)
                 }
+                withContext(Dispatchers.Main) { triggerCoverScan(item.path) }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
+                    _torrentPreBuffer.value = TorrentPreBufferState.Idle
                     _error.value = e.message ?: "Не удалось получить ссылку"
                 }
             }
         }
+    }
+
+    /**
+     * Boosts priority for the file's initial pieces and suspends until
+     * [MIN_INITIAL_PIECES] of them are downloaded. Shows [TorrentPreBufferState.Buffering]
+     * progress in the UI while waiting so the player never starts on empty data.
+     */
+    private suspend fun waitForTorrentBuffer(mediaId: String) {
+        val parts = mediaId.split(":")
+        if (parts.size < 2) return
+        val infoHash = parts[0]
+        val fileIndex = parts[1].toIntOrNull() ?: return
+        torrentEngine.boostFilePriority(infoHash, fileIndex)
+        withContext(Dispatchers.Main) {
+            _torrentPreBuffer.value = TorrentPreBufferState.Buffering(0f)
+        }
+        torrentEngine.waitForInitialPiecesFlow(infoHash, fileIndex, MIN_INITIAL_PIECES)
+            .collect { progress ->
+                withContext(Dispatchers.Main) {
+                    _torrentPreBuffer.value = TorrentPreBufferState.Buffering(progress)
+                }
+            }
     }
 
     // ── Folder mode (Browser) ─────────────────────────────────────────────────
@@ -289,10 +322,27 @@ class PlayerViewModel @Inject constructor(
                     return@launch
                 }
 
-                withContext(Dispatchers.Main) {
-                    _isLoadingPlaylist.value = false
-                    val c = controller
-                    if (c == null) pendingMediaItem = clickedMediaItem else playMediaItem(clickedMediaItem)
+                withContext(Dispatchers.Main) { _isLoadingPlaylist.value = false }
+
+                if (isTorrentStream) {
+                    try {
+                        waitForTorrentBuffer(clickedItem.id)
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            _torrentPreBuffer.value = TorrentPreBufferState.Idle
+                            _error.value = e.message ?: "Ошибка буферизации торрента"
+                        }
+                        return@launch
+                    }
+                    withContext(Dispatchers.Main) {
+                        _torrentPreBuffer.value = TorrentPreBufferState.Idle
+                        playMediaItem(clickedMediaItem)
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        val c = controller
+                        if (c == null) pendingMediaItem = clickedMediaItem else playMediaItem(clickedMediaItem)
+                    }
                 }
 
                 if (mediaFiles.size == 1) return@launch
@@ -407,10 +457,27 @@ class PlayerViewModel @Inject constructor(
                     return@launch
                 }
 
-                withContext(Dispatchers.Main) {
-                    _isLoadingPlaylist.value = false
-                    val c = controller
-                    if (c == null) pendingMediaItem = firstMediaItem else playMediaItem(firstMediaItem)
+                withContext(Dispatchers.Main) { _isLoadingPlaylist.value = false }
+
+                if (isTorrentStream) {
+                    try {
+                        waitForTorrentBuffer(firstItem.id)
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            _torrentPreBuffer.value = TorrentPreBufferState.Idle
+                            _error.value = e.message ?: "Ошибка буферизации торрента"
+                        }
+                        return@launch
+                    }
+                    withContext(Dispatchers.Main) {
+                        _torrentPreBuffer.value = TorrentPreBufferState.Idle
+                        playMediaItem(firstMediaItem)
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        val c = controller
+                        if (c == null) pendingMediaItem = firstMediaItem else playMediaItem(firstMediaItem)
+                    }
                 }
 
                 if (cloudItems.size == 1) return@launch
@@ -698,4 +765,14 @@ class PlayerViewModel @Inject constructor(
         val folderPath: String,
         val hasImages: Boolean,
     )
+
+    sealed class TorrentPreBufferState {
+        object Idle : TorrentPreBufferState()
+        data class Buffering(val progress: Float) : TorrentPreBufferState()
+    }
+
+    companion object {
+        /** Number of initial file pieces to download before handing off to ExoPlayer. */
+        private const val MIN_INITIAL_PIECES = 5
+    }
 }
