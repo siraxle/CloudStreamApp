@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -228,13 +231,13 @@ private fun AudioPlayerContent(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp),
+                .verticalScroll(rememberScrollState()),
         ) {
-            // Cover area — swipeable pager of cloud images, or embedded art, or placeholder
+            // Cover area — square, fills full width
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
+                    .aspectRatio(1f),
                 contentAlignment = Alignment.Center,
             ) {
                 CoverArea(
@@ -287,101 +290,110 @@ private fun AudioPlayerContent(
                 }
             }
 
-            // Track info
-            Text(
-                text = state.title ?: "Без названия",
-                style = MaterialTheme.typography.headlineSmall,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            state.artist?.let {
-                Spacer(modifier = Modifier.height(8.dp))
+            // Track info + controls — own horizontal padding
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+            ) {
+                Spacer(modifier = Modifier.height(6.dp))
+
                 Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = state.title ?: "Без названия",
+                    style = MaterialTheme.typography.titleMedium,
                     textAlign = TextAlign.Center,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
-            }
+                state.artist?.let {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
-            Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-            if (state.durationMs > 0) {
-                val safeMax = state.durationMs.coerceAtLeast(1L).toFloat()
-                ThinSlider(
-                    value = state.positionMs.toFloat().coerceIn(0f, safeMax),
-                    onValueChange = { onSeekTo(it.toLong()) },
-                    valueRange = 0f..safeMax,
+                if (state.durationMs > 0) {
+                    val safeMax = state.durationMs.coerceAtLeast(1L).toFloat()
+                    ThinSlider(
+                        value = state.positionMs.toFloat().coerceIn(0f, safeMax),
+                        onValueChange = { onSeekTo(it.toLong()) },
+                        valueRange = 0f..safeMax,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = state.positionMs.toFormattedDuration(),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        Text(
+                            text = state.durationMs.toFormattedDuration(),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    IconButton(
+                        onClick = onSkipPrevious,
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.SkipPrevious,
+                            contentDescription = "Предыдущий",
+                            modifier = Modifier.size(32.dp),
+                        )
+                    }
+                    IconButton(
+                        onClick = onTogglePlayPause,
+                        modifier = Modifier.size(56.dp),
+                    ) {
+                        Icon(
+                            if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (state.isPlaying) "Пауза" else "Играть",
+                            modifier = Modifier.size(52.dp),
+                        )
+                    }
+                    IconButton(
+                        onClick = onSkipNext,
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.SkipNext,
+                            contentDescription = "Следующий",
+                            modifier = Modifier.size(32.dp),
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                SpeedSelector(
+                    currentSpeed = playbackSpeed,
+                    onSpeedSelected = onSetPlaybackSpeed,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        text = state.positionMs.toFormattedDuration(),
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                    Text(
-                        text = state.durationMs.toFormattedDuration(),
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                }
+
+                Spacer(modifier = Modifier.height(8.dp))
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                IconButton(
-                    onClick = onSkipPrevious,
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    Icon(
-                        Icons.Default.SkipPrevious,
-                        contentDescription = "Предыдущий",
-                        modifier = Modifier.size(32.dp),
-                    )
-                }
-                IconButton(
-                    onClick = onTogglePlayPause,
-                    modifier = Modifier.size(56.dp),
-                ) {
-                    Icon(
-                        if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (state.isPlaying) "Пауза" else "Играть",
-                        modifier = Modifier.size(52.dp),
-                    )
-                }
-                IconButton(
-                    onClick = onSkipNext,
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    Icon(
-                        Icons.Default.SkipNext,
-                        contentDescription = "Следующий",
-                        modifier = Modifier.size(32.dp),
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            SpeedSelector(
-                currentSpeed = playbackSpeed,
-                onSpeedSelected = onSetPlaybackSpeed,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
         }
     }
 }
