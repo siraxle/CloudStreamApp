@@ -1,7 +1,8 @@
 package com.example.cloudstreamapp.ui.torrent.downloads
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,8 +12,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MusicNote
@@ -50,9 +53,15 @@ fun TorrentGroupDetailScreen(
     onOpenPlaylist: (String) -> Unit,
     viewModel: TorrentGroupDetailViewModel = hiltViewModel(),
 ) {
-    val folders by viewModel.folders.collectAsState()
-    val hasFolders by viewModel.hasFolders.collectAsState()
+    val items by viewModel.items.collectAsState()
+    val canNavigateUp by viewModel.canNavigateUp.collectAsState()
+    val breadcrumbs by viewModel.breadcrumbs.collectAsState()
     val pendingDelete by viewModel.pendingDelete.collectAsState()
+    val pendingDeleteFolder by viewModel.pendingDeleteFolder.collectAsState()
+
+    BackHandler(enabled = canNavigateUp) {
+        viewModel.navigateUp()
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
@@ -68,13 +77,19 @@ fun TorrentGroupDetailScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = viewModel.torrentName,
+                        text = if (canNavigateUp)
+                            breadcrumbs.lastOrNull()?.name ?: viewModel.torrentName
+                        else
+                            viewModel.torrentName,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        if (canNavigateUp) viewModel.navigateUp()
+                        else onBack()
+                    }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
                     }
                 },
@@ -90,34 +105,58 @@ fun TorrentGroupDetailScreen(
             )
         }
     ) { padding ->
-        if (folders.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("Нет треков", style = MaterialTheme.typography.bodyLarge)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            if (canNavigateUp) {
+                BreadcrumbBar(
+                    breadcrumbs = breadcrumbs,
+                    onNavigate = { viewModel.navigateTo(it) },
+                )
+                HorizontalDivider()
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-            ) {
-                folders.forEach { folder ->
-                    if (hasFolders) {
-                        item(key = "folder:${folder.folderPath}") {
-                            FolderSubHeader(folder = folder)
-                        }
+
+            when {
+                items.isEmpty() -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("Нет треков", style = MaterialTheme.typography.bodyLarge)
                     }
-                    items(folder.tracks, key = { "track:${it.id}" }) { entity ->
-                        TrackRow(
-                            entity = entity,
-                            onPlay = { viewModel.playTrack(entity) },
-                            onDelete = { viewModel.requestDelete(entity) },
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+                }
+                else -> {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(
+                            items,
+                            key = { item ->
+                                when (item) {
+                                    is TorrentGroupDetailViewModel.BrowseItem.Folder -> "folder:${item.fullPath}"
+                                    is TorrentGroupDetailViewModel.BrowseItem.Track -> "track:${item.entity.id}"
+                                }
+                            },
+                        ) { item ->
+                            when (item) {
+                                is TorrentGroupDetailViewModel.BrowseItem.Folder -> {
+                                    FolderRow(
+                                        folder = item,
+                                        onClick = { viewModel.navigateInto(item) },
+                                        onDelete = { viewModel.requestDeleteFolder(item) },
+                                    )
+                                    HorizontalDivider()
+                                }
+                                is TorrentGroupDetailViewModel.BrowseItem.Track -> {
+                                    TrackRow(
+                                        entity = item.entity,
+                                        onPlay = { viewModel.playTrack(item.entity) },
+                                        onDelete = { viewModel.requestDelete(item.entity) },
+                                    )
+                                    HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -145,37 +184,112 @@ fun TorrentGroupDetailScreen(
             },
         )
     }
+
+    if (pendingDeleteFolder != null) {
+        val folder = pendingDeleteFolder!!
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelDeleteFolder() },
+            title = { Text("Удалить папку?") },
+            text = {
+                Text(
+                    "Папка «${folder.name}» и все ${pluralTracks(folder.trackCount)} внутри " +
+                    "будут удалены с устройства."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmDeleteFolder() }) {
+                    Text("Удалить", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.cancelDeleteFolder() }) { Text("Отмена") }
+            },
+        )
+    }
 }
 
 @Composable
-private fun FolderSubHeader(folder: TorrentGroupDetailViewModel.FolderGroup) {
+private fun BreadcrumbBar(
+    breadcrumbs: List<TorrentGroupDetailViewModel.Breadcrumb>,
+    onNavigate: (String) -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 4.dp),
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Icon(
-            Icons.Default.Folder,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp),
-            tint = MaterialTheme.colorScheme.secondary,
-        )
-        Text(
-            text = folder.displayName.ifEmpty { "Корень" },
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.secondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = pluralTracks(folder.tracks.size),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        breadcrumbs.forEachIndexed { index, crumb ->
+            if (index > 0) {
+                Icon(
+                    Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            val isLast = index == breadcrumbs.lastIndex
+            Text(
+                text = crumb.name,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (isLast) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.primary,
+                modifier = if (!isLast) Modifier.clickable { onNavigate(crumb.path) } else Modifier,
+                maxLines = 1,
+            )
+        }
     }
+}
+
+@Composable
+private fun FolderRow(
+    folder: TorrentGroupDetailViewModel.BrowseItem.Folder,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    ListItem(
+        modifier = Modifier.clickable(onClick = onClick),
+        leadingContent = {
+            Icon(
+                Icons.Default.Folder,
+                contentDescription = null,
+                modifier = Modifier.size(40.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        },
+        headlineContent = {
+            Text(
+                text = folder.name,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        supportingContent = {
+            Text(
+                text = "${pluralTracks(folder.trackCount)} · ${folder.totalSizeBytes.toHumanReadableSize()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Удалить папку",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(
+                    Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+    )
 }
 
 @Composable
