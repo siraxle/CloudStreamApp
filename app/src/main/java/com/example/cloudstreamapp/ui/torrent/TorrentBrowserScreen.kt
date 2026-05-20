@@ -20,6 +20,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -49,7 +51,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -62,8 +64,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -124,6 +128,7 @@ fun TorrentBrowserScreen(
     val downloadProgress by viewModel.downloadProgress.collectAsState()
     val savedHashes by viewModel.savedHashes.collectAsState()
     val context = LocalContext.current
+    val searchInteractionSource = remember { MutableInteractionSource() }
 
     val torrentFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -215,14 +220,13 @@ fun TorrentBrowserScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    OutlinedTextField(
+                    BasicTextField(
                         value = query,
                         onValueChange = viewModel::onQueryChanged,
                         modifier = Modifier.weight(1f),
-                        placeholder = { Text("Поиск или magnet-ссылка…") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Text,
@@ -231,6 +235,29 @@ fun TorrentBrowserScreen(
                         keyboardActions = KeyboardActions(
                             onSearch = { viewModel.search() },
                         ),
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        decorationBox = { innerTextField ->
+                            OutlinedTextFieldDefaults.DecorationBox(
+                                value = query,
+                                innerTextField = innerTextField,
+                                enabled = true,
+                                singleLine = true,
+                                visualTransformation = VisualTransformation.None,
+                                interactionSource = searchInteractionSource,
+                                placeholder = { Text("Поиск или magnet-ссылка…") },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                container = {
+                                    OutlinedTextFieldDefaults.Container(
+                                        enabled = true,
+                                        isError = false,
+                                        interactionSource = searchInteractionSource,
+                                    )
+                                },
+                            )
+                        },
                     )
                     Spacer(Modifier.width(8.dp))
                     IconButton(onClick = { viewModel.search() }) {
@@ -361,25 +388,23 @@ private fun SearchResultsContent(
     onUnsaveResult: (String) -> Unit,
 ) {
     Column {
-        if (state.availableSources.size > 1) {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                item {
-                    FilterChip(
-                        selected = state.activeFilter == null,
-                        onClick = { onFilterSource(null) },
-                        label = { Text("Все (${state.totalCount})") },
-                    )
-                }
-                items(state.availableSources) { src ->
-                    FilterChip(
-                        selected = state.activeFilter == src,
-                        onClick = { onFilterSource(src) },
-                        label = { Text(src.displayName) },
-                    )
-                }
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            item {
+                FilterChip(
+                    selected = state.activeFilter == null,
+                    onClick = { onFilterSource(null) },
+                    label = { Text("Все (${state.totalCount})") },
+                )
+            }
+            items(TorrentSource.entries) { src ->
+                FilterChip(
+                    selected = state.activeFilter == src,
+                    onClick = { onFilterSource(src) },
+                    label = { Text(src.displayName) },
+                )
             }
         }
 
