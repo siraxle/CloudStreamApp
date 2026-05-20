@@ -349,6 +349,8 @@ class TorrentBrowserViewModel @Inject constructor(
 
     sealed class Event {
         data class OpenPlaylist(val playlistId: String) : Event()
+        data class DownloadStarted(val fileName: String) : Event()
+        data class FolderDownloadStarted(val folderName: String) : Event()
     }
 
     private val _events = MutableSharedFlow<Event>(extraBufferCapacity = 1)
@@ -457,6 +459,7 @@ class TorrentBrowserViewModel @Inject constructor(
             torrentName = current.torrentName,
             folderPath = folderPath,
         )
+        viewModelScope.launch { _events.emit(Event.DownloadStarted(item.name)) }
     }
 
     /** Downloads all audio files inside a folder item (and its subfolders). */
@@ -467,6 +470,7 @@ class TorrentBrowserViewModel @Inject constructor(
             folderPath = folderItem.path.relativePath,
             torrentName = current.torrentName,
         )
+        viewModelScope.launch { _events.emit(Event.FolderDownloadStarted(folderItem.name)) }
     }
 
     /** Cancels all active downloads inside a folder item (and its subfolders). */

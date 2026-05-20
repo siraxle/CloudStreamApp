@@ -51,11 +51,14 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -101,10 +104,16 @@ fun TorrentBrowserScreen(
         }
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
             when (event) {
                 is TorrentBrowserViewModel.Event.OpenPlaylist -> onOpenPlaylist(event.playlistId)
+                is TorrentBrowserViewModel.Event.DownloadStarted ->
+                    snackbarHostState.showSnackbar("Скачивание: ${event.fileName}")
+                is TorrentBrowserViewModel.Event.FolderDownloadStarted ->
+                    snackbarHostState.showSnackbar("Скачивание папки: ${event.folderName}")
             }
         }
     }
@@ -145,6 +154,7 @@ fun TorrentBrowserScreen(
     val downloadCount = downloadProgress.values.count { it is DownloadProgress.Done }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Торренты") },
