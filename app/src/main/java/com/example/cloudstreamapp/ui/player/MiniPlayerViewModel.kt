@@ -79,6 +79,7 @@ class MiniPlayerViewModel @Inject constructor(
         if (c.isPlaying) c.pause() else c.play()
     }
 
+    fun seekTo(positionMs: Long) { controller?.seekTo(positionMs) }
     fun skipToNext() { controller?.seekToNextMediaItem() }
     fun skipToPrevious() { controller?.seekToPreviousMediaItem() }
 
