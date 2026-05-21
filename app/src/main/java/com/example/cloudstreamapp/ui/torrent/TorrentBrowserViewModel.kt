@@ -286,8 +286,12 @@ class TorrentBrowserViewModel @Inject constructor(
             savedStateHandle[KEY_TORRENT_NAME] = torrentName
             savedStateHandle[KEY_FOLDER_PATH]  = folderPath
             savedStateHandle[KEY_PAGE]         = page
-            // Restore Cached status for files that are already on disk (survives restarts)
-            withContext(Dispatchers.IO) { cacheManager.restoreCacheState(infoHash) }
+            // Restore completed-cache status from DB, then resume any downloads that were
+            // interrupted when the app was killed (files on disk but not yet fully cached).
+            withContext(Dispatchers.IO) {
+                cacheManager.restoreCacheState(infoHash)
+                cacheManager.resumePendingCaching(infoHash)
+            }
         }
     }
 

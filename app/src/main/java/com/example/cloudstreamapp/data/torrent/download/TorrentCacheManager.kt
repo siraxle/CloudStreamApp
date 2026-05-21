@@ -28,10 +28,16 @@ import javax.inject.Singleton
  * Distinct from [TorrentDownloadManager] which copies finished files to the Music folder.
  * This manager enables and monitors piece-by-piece download of specific folders so the
  * user can see Caching → Cached status for each track.
+ *
+ * Completed-cache state is persisted to [TorrentCachedFileDao] so that on app restart
+ * [restoreCacheState] can accurately reflect which files are truly done — instead of
+ * relying on disk file size, which is always equal to the full size because libtorrent
+ * pre-allocates files on first download.
  */
 @Singleton
 class TorrentCacheManager @Inject constructor(
     private val engine: LibtorrentEngine,
+    private val cachedFileDao: TorrentCachedFileDao,
 ) {
     companion object {
         private const val TAG = "TorrentCacheManager"
@@ -45,9 +51,10 @@ class TorrentCacheManager @Inject constructor(
 
     private val jobs = ConcurrentHashMap<String, Job>()
 
-    // Tracks which infoHashes have already been scanned on-disk to restore Cached state,
-    // so we don't re-scan every time the user navigates folders.
+    // Guards restoreCacheState and resumePendingCaching so they each run at most once
+    // per infoHash per process lifetime (reset when cache is cleared).
     private val restoredHashes: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
+    private val resumedHashes: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
 
     /**
      * Enables downloading and tracks progress for all audio files under [folderPath]
@@ -71,24 +78,7 @@ class TorrentCacheManager @Inject constructor(
             if (_progress.value[key] is CacheProgress.Cached) return@forEach
             if (jobs.containsKey(key)) return@forEach
 
-            engine.enableFileDownload(infoHash, file.index)
-            engine.boostFilePriority(infoHash, file.index)
-
-            _progress.update { it + (key to CacheProgress.Caching(0f)) }
-
-            jobs[key] = scope.launch {
-                try {
-                    engine.fileDownloadProgressFlow(infoHash, file.index)
-                        .onEach { fraction ->
-                            _progress.update { it + (key to CacheProgress.Caching(fraction)) }
-                        }
-                        .first { it >= 1f }
-                    _progress.update { it + (key to CacheProgress.Cached) }
-                    Log.i(TAG, "Cached: $key (${file.name})")
-                } finally {
-                    jobs.remove(key)
-                }
-            }
+            startCachingJob(infoHash, file.index, file.name, key)
         }
     }
 
@@ -125,52 +115,103 @@ class TorrentCacheManager @Inject constructor(
     fun totalCacheSizeBytes(): Long = engine.streamingCacheSizeBytes()
 
     /**
-     * Scans the on-disk torrent directory once per infoHash and restores [CacheProgress.Cached]
-     * for any files that are already fully downloaded. Called after a torrent is opened so the
-     * UI shows correct status without requiring a fresh download.
+     * Restores [CacheProgress.Cached] from the DB for files that were fully cached in a
+     * previous session. Must be called on a non-main thread (uses blocking Room queries).
+     *
+     * Unlike the previous implementation this does NOT check [File.length] — libtorrent
+     * pre-allocates files to their full size the moment a download starts, so a size check
+     * would mark every partially-downloaded file as Cached after a restart.
      */
     fun restoreCacheState(infoHash: String) {
         if (!restoredHashes.add(infoHash)) return
+        val cachedKeys = cachedFileDao.getKeysForHash(infoHash).toSet()
+        if (cachedKeys.isEmpty()) return
+
         engine.listFiles(infoHash).filter { it.name.isAudioFile() }.forEach { file ->
             val key = "$infoHash:${file.index}"
             if (_progress.value.containsKey(key)) return@forEach
-            val diskFile = engine.getFilePath(infoHash, file.index) ?: return@forEach
-            if (diskFile.exists() && diskFile.length() >= file.sizeBytes) {
+            if (key !in cachedKeys) return@forEach
+
+            val diskFile = engine.getFilePath(infoHash, file.index)
+            if (diskFile?.exists() == true) {
                 _progress.update { it + (key to CacheProgress.Cached) }
                 Log.d(TAG, "Restored cached: $key (${file.name})")
+            } else {
+                // File recorded as cached in DB but deleted from disk — purge stale entry.
+                cachedFileDao.deleteByKeys(listOf(key))
+                Log.w(TAG, "Stale cache entry removed: $key (file missing on disk)")
             }
+        }
+    }
+
+    /**
+     * Resumes caching for any audio file that is on disk (was being downloaded in a prior
+     * session) but is not yet recorded as fully cached in the DB. Call this after
+     * [restoreCacheState] when the user reopens a torrent folder after a restart.
+     *
+     * Must be called on a non-main thread (uses blocking Room queries).
+     */
+    fun resumePendingCaching(infoHash: String) {
+        if (!resumedHashes.add(infoHash)) return
+        val cachedKeys = cachedFileDao.getKeysForHash(infoHash).toSet()
+
+        engine.listFiles(infoHash).filter { it.name.isAudioFile() }.forEach { file ->
+            val key = "$infoHash:${file.index}"
+            if (_progress.value[key] is CacheProgress.Cached) return@forEach
+            if (jobs.containsKey(key)) return@forEach
+            if (key in cachedKeys) return@forEach
+
+            // If the file exists on disk it was being cached when the app was killed.
+            val diskFile = engine.getFilePath(infoHash, file.index) ?: return@forEach
+            if (!diskFile.exists()) return@forEach
+
+            Log.d(TAG, "Resuming partial cache: $key (${file.name})")
+            startCachingJob(infoHash, file.index, file.name, key)
         }
     }
 
     /**
      * Cancels in-progress caching, deletes cached files from disk, and resets libtorrent
      * priorities for all audio files under [folderPath] within [infoHash].
+     * Must be called on a non-main thread (uses blocking Room queries).
      */
     fun clearFolderCache(infoHash: String, folderPath: String) {
         val prefix = if (folderPath.isEmpty()) "" else "$folderPath/"
+        val keysToDelete = mutableListOf<String>()
+
         engine.listFiles(infoHash)
             .filter { f -> prefix.isEmpty() || f.relativePath.startsWith(prefix) }
             .filter { f -> f.name.isAudioFile() }
             .forEach { file ->
                 val key = "$infoHash:${file.index}"
+                keysToDelete += key
                 jobs.remove(key)?.cancel()
                 _progress.update { it - key }
                 engine.getFilePath(infoHash, file.index)?.delete()
                 engine.resetFilePriority(infoHash, file.index)
             }
+
         restoredHashes.remove(infoHash)
+        resumedHashes.remove(infoHash)
+
+        if (keysToDelete.isNotEmpty()) {
+            cachedFileDao.deleteByKeys(keysToDelete)
+        }
         Log.i(TAG, "Folder cache cleared: '$folderPath' in $infoHash")
     }
 
     /**
      * Cancels all caching jobs, clears progress state, and deletes the entire streaming
      * cache from disk. Used by the Settings "Clear torrent cache" action.
+     * Must be called on a non-main thread (uses blocking Room queries).
      */
     fun clearAllCache() {
         jobs.values.forEach { it.cancel() }
         jobs.clear()
         _progress.value = emptyMap()
         restoredHashes.clear()
+        resumedHashes.clear()
+        cachedFileDao.deleteAll()
         engine.clearStreamingCache()
         Log.i(TAG, "All streaming cache cleared")
     }
@@ -195,5 +236,28 @@ class TorrentCacheManager @Inject constructor(
             .filter { (_, files) -> files.all { it.index in cachedIndices } }
             .keys
             .toSet()
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    private fun startCachingJob(infoHash: String, fileIndex: Int, fileName: String, key: String) {
+        engine.enableFileDownload(infoHash, fileIndex)
+        engine.boostFilePriority(infoHash, fileIndex)
+        _progress.update { it + (key to CacheProgress.Caching(0f)) }
+
+        jobs[key] = scope.launch {
+            try {
+                engine.fileDownloadProgressFlow(infoHash, fileIndex)
+                    .onEach { fraction ->
+                        _progress.update { it + (key to CacheProgress.Caching(fraction)) }
+                    }
+                    .first { it >= 1f }
+                _progress.update { it + (key to CacheProgress.Cached) }
+                cachedFileDao.insert(TorrentCachedFileEntity(key, infoHash, fileIndex))
+                Log.i(TAG, "Cached: $key ($fileName)")
+            } finally {
+                jobs.remove(key)
+            }
+        }
     }
 }
