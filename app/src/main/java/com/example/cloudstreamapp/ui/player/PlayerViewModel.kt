@@ -12,16 +12,19 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import android.net.Uri
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.data.torrent.download.TorrentCacheManager
 import com.example.cloudstreamapp.data.torrent.engine.LibtorrentEngine
 import com.example.cloudstreamapp.core.utils.isImageFile
 import com.example.cloudstreamapp.core.utils.isMediaFile
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
+import com.example.cloudstreamapp.data.torrent.saved.SavedTorrentRepository
 import com.example.cloudstreamapp.domain.model.CacheStatus
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.CloudPath
 import com.example.cloudstreamapp.domain.model.CloudType
+import com.example.cloudstreamapp.domain.torrent.TorrentResult
 import com.example.cloudstreamapp.domain.usecase.GetStreamUrlUseCase
 import com.example.cloudstreamapp.domain.usecase.ListFolderUseCase
 import com.example.cloudstreamapp.service.PlaybackService
@@ -58,6 +61,7 @@ class PlayerViewModel @Inject constructor(
     private val settings: SettingsRepositoryPort,
     private val torrentEngine: LibtorrentEngine,
     private val torrentCacheManager: TorrentCacheManager,
+    private val savedTorrentRepo: SavedTorrentRepository,
 ) : ViewModel() {
 
     private var controller: MediaController? = null
@@ -245,6 +249,7 @@ class PlayerViewModel @Inject constructor(
             .find { it.index == fileIndex }
             ?.relativePath?.substringBeforeLast("/", "") ?: ""
         torrentCacheManager.cacheFolder(infoHash, folderPath)
+        autoSaveTorrentIfAbsent(infoHash, folderPath)
 
         torrentEngine.boostFilePriority(infoHash, fileIndex)
         withContext(Dispatchers.Main) {
@@ -256,6 +261,31 @@ class PlayerViewModel @Inject constructor(
                     _torrentPreBuffer.value = TorrentPreBufferState.Buffering(progress)
                 }
             }
+    }
+
+    private suspend fun autoSaveTorrentIfAbsent(infoHash: String, folderPath: String) {
+        runCatching {
+            if (savedTorrentRepo.getAllHashes().first().contains(infoHash)) return
+            val magnetUri = savedStateHandle.get<String>("encodedSourceUrl") ?: return
+            val name = when {
+                magnetUri.startsWith("magnet:") -> {
+                    val dn = magnetUri.substringAfter("dn=", "").substringBefore("&")
+                    Uri.decode(dn).ifBlank { infoHash }
+                }
+                else -> folderPath.split("/").firstOrNull { it.isNotBlank() } ?: infoHash
+            }
+            savedTorrentRepo.save(
+                TorrentResult(
+                    name = name,
+                    magnetUri = magnetUri,
+                    infoHash = infoHash,
+                    sizeBytes = 0L,
+                    seeders = 0,
+                    leechers = 0,
+                    source = "",
+                )
+            )
+        }
     }
 
     // ── Folder mode (Browser) ─────────────────────────────────────────────────
