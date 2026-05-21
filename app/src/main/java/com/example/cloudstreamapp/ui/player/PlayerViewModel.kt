@@ -13,6 +13,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
+import com.example.cloudstreamapp.data.torrent.download.TorrentCacheManager
 import com.example.cloudstreamapp.data.torrent.engine.LibtorrentEngine
 import com.example.cloudstreamapp.core.utils.isImageFile
 import com.example.cloudstreamapp.core.utils.isMediaFile
@@ -56,6 +57,7 @@ class PlayerViewModel @Inject constructor(
     private val cacheManager: MediaCacheManager,
     private val settings: SettingsRepositoryPort,
     private val torrentEngine: LibtorrentEngine,
+    private val torrentCacheManager: TorrentCacheManager,
 ) : ViewModel() {
 
     private var controller: MediaController? = null
@@ -237,6 +239,13 @@ class PlayerViewModel @Inject constructor(
         if (parts.size < 2) return
         val infoHash = parts[0]
         val fileIndex = parts[1].toIntOrNull() ?: return
+
+        // Cache the folder containing this track (non-blocking — runs in its own scope)
+        val folderPath = torrentEngine.listFiles(infoHash)
+            .find { it.index == fileIndex }
+            ?.relativePath?.substringBeforeLast("/", "") ?: ""
+        torrentCacheManager.cacheFolder(infoHash, folderPath)
+
         torrentEngine.boostFilePriority(infoHash, fileIndex)
         withContext(Dispatchers.Main) {
             _torrentPreBuffer.value = TorrentPreBufferState.Buffering(0f)

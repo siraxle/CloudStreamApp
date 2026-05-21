@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.data.torrent.TorrentCloudProvider
 import com.example.cloudstreamapp.data.torrent.TorrentRepository
+import com.example.cloudstreamapp.data.torrent.download.TorrentCacheManager
 import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadManager
 import com.example.cloudstreamapp.data.torrent.local.LocalTorrentRepository
 import com.example.cloudstreamapp.data.torrent.saved.SavedTorrentRepository
@@ -18,6 +19,7 @@ import com.example.cloudstreamapp.domain.model.CloudPath
 import com.example.cloudstreamapp.domain.model.CloudResult
 import com.example.cloudstreamapp.domain.model.CloudType
 import com.example.cloudstreamapp.domain.model.Playlist
+import com.example.cloudstreamapp.domain.torrent.CacheProgress
 import com.example.cloudstreamapp.domain.torrent.DownloadProgress
 import com.example.cloudstreamapp.domain.torrent.TorrentResult
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -45,6 +47,7 @@ class TorrentBrowserViewModel @Inject constructor(
     private val localTorrentRepo: LocalTorrentRepository,
     private val savedTorrentRepo: SavedTorrentRepository,
     private val playlistRepo: PlaylistRepositoryImpl,
+    private val cacheManager: TorrentCacheManager,
 ) : ViewModel() {
 
     companion object {
@@ -440,6 +443,26 @@ class TorrentBrowserViewModel @Inject constructor(
         .map { _ ->
             val state = _uiState.value as? UiState.FileList ?: return@map emptySet()
             downloadManager.activeFolderPaths(state.infoHash)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    /** Live map of torrent cache progress keyed by "${infoHash}:${fileIndex}". */
+    val cacheProgress: StateFlow<Map<String, CacheProgress>> =
+        cacheManager.progress.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** Folder paths that have at least one file actively being cached. */
+    val activeFolderCachePaths: StateFlow<Set<String>> = cacheManager.progress
+        .map { _ ->
+            val state = _uiState.value as? UiState.FileList ?: return@map emptySet()
+            cacheManager.activeFolderCachePaths(state.infoHash)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    /** Folder paths where every audio file is fully cached. */
+    val cachedFolderPaths: StateFlow<Set<String>> = cacheManager.progress
+        .map { _ ->
+            val state = _uiState.value as? UiState.FileList ?: return@map emptySet()
+            cacheManager.cachedFolderPaths(state.infoHash)
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 

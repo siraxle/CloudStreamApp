@@ -119,16 +119,14 @@ class LibtorrentEngine @Inject constructor(
         val handle = waitForHandle(ti.infoHash(), timeoutMs = 5_000L)
             ?: throw RuntimeException("TorrentHandle not found after starting download")
 
-        // Sequential download + critical piece boost (first 5 + last 5)
+        // Sequential download; disable all files — only download what's explicitly requested
         handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
-        val n = ti.numPieces()
-        (0 until minOf(5, n)).forEach { handle.piecePriority(it, Priority.TOP_PRIORITY) }
-        (maxOf(0, n - 5) until n).forEach { handle.piecePriority(it, Priority.TOP_PRIORITY) }
+        for (i in 0 until ti.numFiles()) handle.filePriority(i, Priority.IGNORE)
 
         states[infoHash] = ActiveTorrent(handle, ti, ConcurrentSkipListSet())
         pieceWaiters[infoHash] = ConcurrentHashMap()
 
-        Log.i(TAG, "Ready: $infoHash — ${ti.numFiles()} files, $n pieces")
+        Log.i(TAG, "Ready: $infoHash — ${ti.numFiles()} files")
         infoHash
     }
 
@@ -151,14 +149,12 @@ class LibtorrentEngine @Inject constructor(
             ?: throw RuntimeException("TorrentHandle not found after starting download")
 
         handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
-        val n = ti.numPieces()
-        (0 until minOf(5, n)).forEach { handle.piecePriority(it, Priority.TOP_PRIORITY) }
-        (maxOf(0, n - 5) until n).forEach { handle.piecePriority(it, Priority.TOP_PRIORITY) }
+        for (i in 0 until ti.numFiles()) handle.filePriority(i, Priority.IGNORE)
 
         states[infoHash] = ActiveTorrent(handle, ti, ConcurrentSkipListSet())
         pieceWaiters[infoHash] = ConcurrentHashMap()
 
-        Log.i(TAG, "Ready (from .torrent file): $infoHash — ${ti.numFiles()} files, $n pieces")
+        Log.i(TAG, "Ready (from .torrent file): $infoHash — ${ti.numFiles()} files")
         infoHash
     }
 
@@ -319,6 +315,16 @@ class LibtorrentEngine @Inject constructor(
             delay(200)
         }
     }.flowOn(Dispatchers.IO)
+
+    /**
+     * Enables sequential background downloading of [fileIndex] by setting its file-level
+     * priority to DEFAULT. Call this before starting a folder cache job so libtorrent
+     * downloads the whole file, not just pieces boosted by piece-level priority.
+     */
+    fun enableFileDownload(infoHash: String, fileIndex: Int) {
+        val state = states[infoHash] ?: return
+        state.handle.filePriority(fileIndex, Priority.DEFAULT)
+    }
 
     /**
      * Sets all pieces belonging to [fileIndex] to TOP_PRIORITY so the torrent

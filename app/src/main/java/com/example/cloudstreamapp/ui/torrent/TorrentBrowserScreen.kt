@@ -75,6 +75,7 @@ import com.example.cloudstreamapp.core.utils.toHumanReadableSize
 import com.example.cloudstreamapp.data.torrent.provider.ContentCategory
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 import com.example.cloudstreamapp.domain.model.CloudItem
+import com.example.cloudstreamapp.domain.torrent.CacheProgress
 import com.example.cloudstreamapp.domain.torrent.DownloadProgress
 import com.example.cloudstreamapp.domain.torrent.TorrentResult
 
@@ -304,10 +305,16 @@ fun TorrentBrowserScreen(
 
                 is TorrentBrowserViewModel.UiState.FileList -> {
                     val activeFolderPaths by viewModel.activeFolderDownloadPaths.collectAsState()
+                    val cacheProgressMap by viewModel.cacheProgress.collectAsState()
+                    val activeFolderCachePaths by viewModel.activeFolderCachePaths.collectAsState()
+                    val cachedFolderPaths by viewModel.cachedFolderPaths.collectAsState()
                     FileListContent(
                         state = state,
                         downloadProgressMap = downloadProgress,
                         activeFolderDownloadPaths = activeFolderPaths,
+                        cacheProgressMap = cacheProgressMap,
+                        activeFolderCachePaths = activeFolderCachePaths,
+                        cachedFolderPaths = cachedFolderPaths,
                         onPlayFile = onPlayFile,
                         onNavigateToFolder = viewModel::navigateToFolder,
                         onNavigateToBreadcrumb = viewModel::navigateToBreadcrumb,
@@ -478,6 +485,9 @@ private fun FileListContent(
     state: TorrentBrowserViewModel.UiState.FileList,
     downloadProgressMap: Map<String, DownloadProgress>,
     activeFolderDownloadPaths: Set<String>,
+    cacheProgressMap: Map<String, CacheProgress>,
+    activeFolderCachePaths: Set<String>,
+    cachedFolderPaths: Set<String>,
     onPlayFile: (item: CloudItem, magnetUri: String, infoHash: String) -> Unit,
     onNavigateToFolder: (CloudItem) -> Unit,
     onNavigateToBreadcrumb: (Int) -> Unit,
@@ -502,9 +512,12 @@ private fun FileListContent(
                 LazyColumn(Modifier.weight(1f)) {
                     items(state.pageItems, key = { it.id }) { item ->
                         if (item.type == CloudItem.ItemType.DIRECTORY) {
+                            val folderPath = item.path.relativePath
                             FolderItem(
                                 item = item,
-                                isDownloading = item.path.relativePath in activeFolderDownloadPaths,
+                                isDownloading = folderPath in activeFolderDownloadPaths,
+                                isCaching = folderPath in activeFolderCachePaths,
+                                isCached = folderPath in cachedFolderPaths,
                                 onClick = { onNavigateToFolder(item) },
                                 onDownload = { onDownloadFolder(item) },
                                 onCancelDownload = { onCancelFolderDownload(item) },
@@ -514,6 +527,7 @@ private fun FileListContent(
                             FileItem(
                                 item = item,
                                 dlProgress = downloadProgressMap[item.id],
+                                cacheProgress = cacheProgressMap[item.id],
                                 onClick = { onPlayFile(item, state.magnetUri, state.infoHash) },
                                 onDownload = { onDownloadFile(item) },
                                 onCancelDownload = { onCancelDownload(item) },
@@ -587,6 +601,8 @@ private fun BreadcrumbRow(
 private fun FolderItem(
     item: CloudItem,
     isDownloading: Boolean,
+    isCaching: Boolean,
+    isCached: Boolean,
     onClick: () -> Unit,
     onDownload: () -> Unit,
     onCancelDownload: () -> Unit,
@@ -597,12 +613,25 @@ private fun FolderItem(
         headlineContent = {
             Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
         },
+        supportingContent = when {
+            isCached -> {{ Text("В кэше", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary) }}
+            isCaching -> {{ Text("Кэширование…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) }}
+            else -> null
+        },
         leadingContent = {
             Icon(
-                Icons.Default.Folder,
+                when {
+                    isCached  -> Icons.Default.OfflinePin
+                    isCaching -> Icons.Default.FolderOpen
+                    else      -> Icons.Default.Folder
+                },
                 contentDescription = null,
                 modifier = Modifier.size(24.dp),
-                tint = MaterialTheme.colorScheme.secondary,
+                tint = when {
+                    isCached  -> MaterialTheme.colorScheme.secondary
+                    isCaching -> MaterialTheme.colorScheme.tertiary
+                    else      -> MaterialTheme.colorScheme.secondary
+                },
             )
         },
         trailingContent = {
@@ -652,11 +681,13 @@ private fun FolderItem(
 private fun FileItem(
     item: CloudItem,
     dlProgress: DownloadProgress?,
+    cacheProgress: CacheProgress?,
     onClick: () -> Unit,
     onDownload: () -> Unit,
     onCancelDownload: () -> Unit,
     onDeleteDownload: () -> Unit,
 ) {
+    val isCached = cacheProgress is CacheProgress.Cached
     ListItem(
         modifier = Modifier.clickable(onClick = onClick),
         headlineContent = {
@@ -667,21 +698,49 @@ private fun FileItem(
                 item.sizeBytes?.let { size ->
                     Text(size.toHumanReadableSize(), style = MaterialTheme.typography.bodySmall)
                 }
-                if (dlProgress is DownloadProgress.Downloading) {
-                    Spacer(Modifier.height(2.dp))
-                    LinearProgressIndicator(
-                        progress = { dlProgress.fraction },
-                        modifier = Modifier.fillMaxWidth(0.7f),
-                    )
+                when {
+                    dlProgress is DownloadProgress.Downloading -> {
+                        Spacer(Modifier.height(2.dp))
+                        LinearProgressIndicator(
+                            progress = { dlProgress.fraction },
+                            modifier = Modifier.fillMaxWidth(0.7f),
+                        )
+                    }
+                    cacheProgress is CacheProgress.Caching -> {
+                        Spacer(Modifier.height(2.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            LinearProgressIndicator(
+                                progress = { cacheProgress.fraction },
+                                modifier = Modifier.weight(1f, fill = false).fillMaxWidth(0.6f),
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                            Text(
+                                "Кэш",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
+                    }
+                    isCached -> {
+                        Text(
+                            "В кэше",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
+                    }
                 }
             }
         },
         leadingContent = {
             Icon(
-                Icons.Default.MusicNote,
+                if (isCached) Icons.Default.OfflinePin else Icons.Default.MusicNote,
                 contentDescription = null,
                 modifier = Modifier.size(24.dp),
-                tint = MaterialTheme.colorScheme.primary,
+                tint = if (isCached) MaterialTheme.colorScheme.secondary
+                       else MaterialTheme.colorScheme.primary,
             )
         },
         trailingContent = {
