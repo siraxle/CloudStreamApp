@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+import java.util.Collections
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -43,6 +44,10 @@ class TorrentCacheManager @Inject constructor(
     val progress: StateFlow<Map<String, CacheProgress>> = _progress.asStateFlow()
 
     private val jobs = ConcurrentHashMap<String, Job>()
+
+    // Tracks which infoHashes have already been scanned on-disk to restore Cached state,
+    // so we don't re-scan every time the user navigates folders.
+    private val restoredHashes: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
 
     /**
      * Enables downloading and tracks progress for all audio files under [folderPath]
@@ -114,6 +119,60 @@ class TorrentCacheManager @Inject constructor(
                 (1..segments.size).map { n -> segments.take(n).joinToString("/") }
             }
             .toSet()
+    }
+
+    /** Total bytes used by the torrent streaming cache on disk. */
+    fun totalCacheSizeBytes(): Long = engine.streamingCacheSizeBytes()
+
+    /**
+     * Scans the on-disk torrent directory once per infoHash and restores [CacheProgress.Cached]
+     * for any files that are already fully downloaded. Called after a torrent is opened so the
+     * UI shows correct status without requiring a fresh download.
+     */
+    fun restoreCacheState(infoHash: String) {
+        if (!restoredHashes.add(infoHash)) return
+        engine.listFiles(infoHash).filter { it.name.isAudioFile() }.forEach { file ->
+            val key = "$infoHash:${file.index}"
+            if (_progress.value.containsKey(key)) return@forEach
+            val diskFile = engine.getFilePath(infoHash, file.index) ?: return@forEach
+            if (diskFile.exists() && diskFile.length() >= file.sizeBytes) {
+                _progress.update { it + (key to CacheProgress.Cached) }
+                Log.d(TAG, "Restored cached: $key (${file.name})")
+            }
+        }
+    }
+
+    /**
+     * Cancels in-progress caching, deletes cached files from disk, and resets libtorrent
+     * priorities for all audio files under [folderPath] within [infoHash].
+     */
+    fun clearFolderCache(infoHash: String, folderPath: String) {
+        val prefix = if (folderPath.isEmpty()) "" else "$folderPath/"
+        engine.listFiles(infoHash)
+            .filter { f -> prefix.isEmpty() || f.relativePath.startsWith(prefix) }
+            .filter { f -> f.name.isAudioFile() }
+            .forEach { file ->
+                val key = "$infoHash:${file.index}"
+                jobs.remove(key)?.cancel()
+                _progress.update { it - key }
+                engine.getFilePath(infoHash, file.index)?.delete()
+                engine.resetFilePriority(infoHash, file.index)
+            }
+        restoredHashes.remove(infoHash)
+        Log.i(TAG, "Folder cache cleared: '$folderPath' in $infoHash")
+    }
+
+    /**
+     * Cancels all caching jobs, clears progress state, and deletes the entire streaming
+     * cache from disk. Used by the Settings "Clear torrent cache" action.
+     */
+    fun clearAllCache() {
+        jobs.values.forEach { it.cancel() }
+        jobs.clear()
+        _progress.value = emptyMap()
+        restoredHashes.clear()
+        engine.clearStreamingCache()
+        Log.i(TAG, "All streaming cache cleared")
     }
 
     /**

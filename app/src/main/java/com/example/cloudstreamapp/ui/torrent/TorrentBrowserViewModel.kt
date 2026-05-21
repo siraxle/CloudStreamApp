@@ -286,6 +286,8 @@ class TorrentBrowserViewModel @Inject constructor(
             savedStateHandle[KEY_TORRENT_NAME] = torrentName
             savedStateHandle[KEY_FOLDER_PATH]  = folderPath
             savedStateHandle[KEY_PAGE]         = page
+            // Restore Cached status for files that are already on disk (survives restarts)
+            withContext(Dispatchers.IO) { cacheManager.restoreCacheState(infoHash) }
         }
     }
 
@@ -354,6 +356,7 @@ class TorrentBrowserViewModel @Inject constructor(
         data class OpenPlaylist(val playlistId: String) : Event()
         data class DownloadStarted(val fileName: String) : Event()
         data class FolderDownloadStarted(val folderName: String) : Event()
+        data class CacheCleared(val folderName: String) : Event()
     }
 
     private val _events = MutableSharedFlow<Event>(extraBufferCapacity = 1)
@@ -503,6 +506,15 @@ class TorrentBrowserViewModel @Inject constructor(
             infoHash = current.infoHash,
             folderPath = folderItem.path.relativePath,
         )
+    }
+
+    /** Clears the streaming cache for all audio files inside a folder item. */
+    fun clearFolderCache(folderItem: CloudItem) {
+        val current = _uiState.value as? UiState.FileList ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            cacheManager.clearFolderCache(current.infoHash, folderItem.path.relativePath)
+        }
+        viewModelScope.launch { _events.emit(Event.CacheCleared(folderItem.name)) }
     }
 
     /** Cancels an in-progress download. */

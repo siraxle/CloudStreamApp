@@ -6,6 +6,7 @@ import com.example.cloudstreamapp.core.cache.ImageCacheManager
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.data.torrent.auth.TorrentAuthStore
+import com.example.cloudstreamapp.data.torrent.download.TorrentCacheManager
 import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadManager
 import com.example.cloudstreamapp.data.torrent.provider.TorrentProviderConfig
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
@@ -31,44 +32,31 @@ class SettingsViewModel @Inject constructor(
     private val torrentProviderConfig: TorrentProviderConfig,
     private val torrentAuthStore: TorrentAuthStore,
     private val torrentDownloadManager: TorrentDownloadManager,
+    private val torrentCacheManager: TorrentCacheManager,
 ) : ViewModel() {
 
-    val cacheLimitBytes: StateFlow<Long> = settings.cacheLimitBytes
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MediaCacheManager.DEFAULT_MAX_BYTES)
+    // ── Storage indicators ────────────────────────────────────────────────────
 
-    private val _usedCacheBytes = MutableStateFlow(0L)
-    val usedCacheBytes: StateFlow<Long> = _usedCacheBytes.asStateFlow()
+    /** Files explicitly saved to device (external Music dir). */
+    private val _downloadedBytes = MutableStateFlow(0L)
+    val downloadedBytes: StateFlow<Long> = _downloadedBytes.asStateFlow()
 
-    private val _tempUsedCacheBytes = MutableStateFlow(0L)
-    val tempUsedCacheBytes: StateFlow<Long> = _tempUsedCacheBytes.asStateFlow()
+    /** Torrent streaming cache in cacheDir/torrents. */
+    private val _torrentCacheBytes = MutableStateFlow(0L)
+    val torrentCacheBytes: StateFlow<Long> = _torrentCacheBytes.asStateFlow()
 
-    private val _torrentDownloadedBytes = MutableStateFlow(0L)
-    val torrentDownloadedBytes: StateFlow<Long> = _torrentDownloadedBytes.asStateFlow()
+    /** ExoPlayer permanent cloud cache in filesDir. */
+    private val _cloudCacheBytes = MutableStateFlow(0L)
+    val cloudCacheBytes: StateFlow<Long> = _cloudCacheBytes.asStateFlow()
 
-    init {
-        refreshCacheUsage()
-    }
-
-    fun refreshCacheUsage() {
-        _usedCacheBytes.value = cacheManager.permUsedBytes
-        _tempUsedCacheBytes.value = cacheManager.tempUsedBytes
-        viewModelScope.launch {
-            _torrentDownloadedBytes.value = withContext(Dispatchers.IO) {
-                torrentDownloadManager.downloadDir
-                    .takeIf { it.exists() }
-                    ?.walkTopDown()
-                    ?.filter { it.isFile }
-                    ?.sumOf { it.length() }
-                    ?: 0L
-            }
-        }
-    }
+    /** ExoPlayer temporary streaming buffer (cleared on every app start). */
+    private val _tempCacheBytes = MutableStateFlow(0L)
+    val tempCacheBytes: StateFlow<Long> = _tempCacheBytes.asStateFlow()
 
     val wifiOnlyPrefetch: StateFlow<Boolean> = settings.wifiOnlyPrefetch
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-
-    // --- Auth dialog state ---
+    // ── Auth dialog state ─────────────────────────────────────────────────────
 
     private val _pendingAuthSource = MutableStateFlow<TorrentSource?>(null)
     val pendingAuthSource: StateFlow<TorrentSource?> = _pendingAuthSource.asStateFlow()
@@ -79,31 +67,70 @@ class SettingsViewModel @Inject constructor(
     private val _loginError = MutableStateFlow<String?>(null)
     val loginError: StateFlow<String?> = _loginError.asStateFlow()
 
-
-    fun setCacheLimit(bytes: Long) {
-        viewModelScope.launch { settings.setCacheLimitBytes(bytes) }
+    init {
+        refreshStorageUsage()
     }
 
-    fun setWifiOnlyPrefetch(enabled: Boolean) {
-        viewModelScope.launch { settings.setWifiOnlyPrefetch(enabled) }
+    fun refreshStorageUsage() {
+        _cloudCacheBytes.value = cacheManager.permUsedBytes
+        _tempCacheBytes.value = cacheManager.tempUsedBytes
+        viewModelScope.launch {
+            _downloadedBytes.value = withContext(Dispatchers.IO) {
+                torrentDownloadManager.downloadDir
+                    .takeIf { it.exists() }
+                    ?.walkTopDown()
+                    ?.filter { it.isFile }
+                    ?.sumOf { it.length() }
+                    ?: 0L
+            }
+            _torrentCacheBytes.value = withContext(Dispatchers.IO) {
+                torrentCacheManager.totalCacheSizeBytes()
+            }
+        }
     }
 
-    fun clearCache() {
+    // ── Storage clear actions ─────────────────────────────────────────────────
+
+    fun clearDownloadedFiles() {
+        viewModelScope.launch(Dispatchers.IO) {
+            torrentDownloadManager.deleteAllDownloads()
+            _downloadedBytes.value = 0L
+        }
+    }
+
+    fun clearTorrentCache() {
+        viewModelScope.launch(Dispatchers.IO) {
+            torrentCacheManager.clearAllCache()
+            _torrentCacheBytes.value = 0L
+        }
+    }
+
+    fun clearCloudCache() {
         cacheManager.clearAll()
         playlistRepo.onCacheCleared()
-        _usedCacheBytes.value = 0L
+        _cloudCacheBytes.value = 0L
     }
 
     fun clearTempCache() {
         cacheManager.clearTemp()
-        _tempUsedCacheBytes.value = 0L
+        _tempCacheBytes.value = 0L
     }
 
     fun clearImageCache() {
         imageCacheManager.clearAll()
     }
 
-    // --- Torrent source management ---
+    fun clearAllCaches() {
+        clearDownloadedFiles()
+        clearTorrentCache()
+        clearCloudCache()
+    }
+
+    fun setWifiOnlyPrefetch(enabled: Boolean) {
+        viewModelScope.launch { settings.setWifiOnlyPrefetch(enabled) }
+    }
+
+    // ── Torrent source management ─────────────────────────────────────────────
 
     fun torrentSourceEnabled(source: TorrentSource): StateFlow<Boolean> =
         torrentProviderConfig.isEnabled(source)

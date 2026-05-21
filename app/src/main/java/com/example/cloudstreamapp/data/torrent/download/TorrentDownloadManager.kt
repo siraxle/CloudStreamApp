@@ -219,6 +219,17 @@ class TorrentDownloadManager @Inject constructor(
         _progress.update { it - key }
     }
 
+    /** Cancels all downloads, deletes all local copies, and wipes the DB. */
+    suspend fun deleteAllDownloads() {
+        jobs.values.forEach { it.cancel() }
+        jobs.clear()
+        _progress.value = emptyMap()
+        db.torrentDownloadDao().deleteAll()
+        downloadDir.deleteRecursively()
+        downloadDir.mkdirs()
+        Log.i(TAG, "All downloads deleted")
+    }
+
     /** Cancels, deletes the local copy, and removes the DB record. */
     suspend fun deleteDownload(infoHash: String, fileIndex: Int) {
         val key = "$infoHash:$fileIndex"

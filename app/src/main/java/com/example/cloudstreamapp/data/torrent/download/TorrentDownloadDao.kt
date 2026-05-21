@@ -30,4 +30,7 @@ interface TorrentDownloadDao {
 
     @Query("DELETE FROM torrent_downloads WHERE id = :id")
     suspend fun deleteById(id: String)
+
+    @Query("DELETE FROM torrent_downloads")
+    suspend fun deleteAll()
 }

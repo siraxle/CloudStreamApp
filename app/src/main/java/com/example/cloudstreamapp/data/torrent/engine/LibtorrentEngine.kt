@@ -256,6 +256,28 @@ class LibtorrentEngine @Inject constructor(
         return TorrentInputStream(file, this, infoHash, fileIndex, startOffset, length)
     }
 
+    /** Returns total bytes used by all files in the torrent streaming cache directory. */
+    fun streamingCacheSizeBytes(): Long =
+        savePath.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+
+    /** Removes all active torrents and deletes everything in [savePath]. */
+    fun clearStreamingCache() {
+        states.keys.toList().forEach { hash ->
+            val state = states.remove(hash) ?: return@forEach
+            session?.remove(state.handle)
+            pieceWaiters.remove(hash)
+        }
+        savePath.deleteRecursively()
+        savePath.mkdirs()
+        Log.i(TAG, "Streaming cache cleared")
+    }
+
+    /** Sets [fileIndex] priority back to IGNORE so libtorrent won't re-download it. */
+    fun resetFilePriority(infoHash: String, fileIndex: Int) {
+        val state = states[infoHash] ?: return
+        state.handle.filePriority(fileIndex, Priority.IGNORE)
+    }
+
     /** Stops downloading a torrent and cleans up all associated state. */
     fun removeTorrent(infoHash: String) {
         val state = states.remove(infoHash) ?: return

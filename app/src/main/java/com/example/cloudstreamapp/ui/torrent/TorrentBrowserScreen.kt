@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
@@ -119,6 +120,8 @@ fun TorrentBrowserScreen(
                     snackbarHostState.showSnackbar("Скачивание: ${event.fileName}")
                 is TorrentBrowserViewModel.Event.FolderDownloadStarted ->
                     snackbarHostState.showSnackbar("Скачивание папки: ${event.folderName}")
+                is TorrentBrowserViewModel.Event.CacheCleared ->
+                    snackbarHostState.showSnackbar("Кэш папки «${event.folderName}» очищен")
             }
         }
     }
@@ -325,6 +328,7 @@ fun TorrentBrowserScreen(
                         onCancelFolderDownload = viewModel::cancelFolderDownload,
                         onDeleteDownload = viewModel::deleteDownload,
                         onAddFolderToPlaylist = viewModel::addFolderToPlaylist,
+                        onClearFolderCache = viewModel::clearFolderCache,
                     )
                 }
 
@@ -498,6 +502,7 @@ private fun FileListContent(
     onCancelFolderDownload: (CloudItem) -> Unit,
     onDeleteDownload: (CloudItem) -> Unit,
     onAddFolderToPlaylist: (CloudItem) -> Unit,
+    onClearFolderCache: (CloudItem) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         BreadcrumbRow(state, onNavigateToBreadcrumb)
@@ -522,6 +527,7 @@ private fun FileListContent(
                                 onDownload = { onDownloadFolder(item) },
                                 onCancelDownload = { onCancelFolderDownload(item) },
                                 onAddToPlaylist = { onAddFolderToPlaylist(item) },
+                                onClearCache = { onClearFolderCache(item) },
                             )
                         } else {
                             FileItem(
@@ -607,6 +613,7 @@ private fun FolderItem(
     onDownload: () -> Unit,
     onCancelDownload: () -> Unit,
     onAddToPlaylist: () -> Unit,
+    onClearCache: () -> Unit,
 ) {
     ListItem(
         modifier = Modifier.clickable(onClick = onClick),
@@ -646,6 +653,16 @@ private fun FolderItem(
                         modifier = Modifier.size(20.dp),
                         tint = MaterialTheme.colorScheme.primary,
                     )
+                }
+                if (isCached || isCaching) {
+                    IconButton(onClick = onClearCache, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Очистить кэш папки",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
                 if (isDownloading) {
                     IconButton(onClick = onCancelDownload, modifier = Modifier.size(36.dp)) {

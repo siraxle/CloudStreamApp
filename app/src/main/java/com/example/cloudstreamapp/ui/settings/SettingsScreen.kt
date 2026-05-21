@@ -1,26 +1,30 @@
 package com.example.cloudstreamapp.ui.settings
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -30,10 +34,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -41,27 +43,19 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.data.torrent.provider.TorrentSource
 
-private val CACHE_PRESETS = listOf(
-    500L * 1024 * 1024 to "500 MB",
-    1L * 1024 * 1024 * 1024 to "1 GB",
-    2L * 1024 * 1024 * 1024 to "2 GB",
-    5L * 1024 * 1024 * 1024 to "5 GB",
-)
-
-private val WarningOrange = Color(0xFFF57C00)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
-    val cacheLimitBytes by viewModel.cacheLimitBytes.collectAsState()
-    val usedCacheBytes by viewModel.usedCacheBytes.collectAsState()
-    val tempUsedCacheBytes by viewModel.tempUsedCacheBytes.collectAsState()
-    val torrentDownloadedBytes by viewModel.torrentDownloadedBytes.collectAsState()
+    val downloadedBytes by viewModel.downloadedBytes.collectAsState()
+    val torrentCacheBytes by viewModel.torrentCacheBytes.collectAsState()
+    val cloudCacheBytes by viewModel.cloudCacheBytes.collectAsState()
+    val tempCacheBytes by viewModel.tempCacheBytes.collectAsState()
     val wifiOnly by viewModel.wifiOnlyPrefetch.collectAsState()
-    var showClearCacheDialog by remember { mutableStateOf(false) }
     val pendingAuthSource by viewModel.pendingAuthSource.collectAsState()
     val loginInProgress by viewModel.loginInProgress.collectAsState()
     val loginError by viewModel.loginError.collectAsState()
+
+    var clearTarget by remember { mutableStateOf<ClearTarget?>(null) }
 
     pendingAuthSource?.let { source ->
         TrackerAuthDialog(
@@ -76,16 +70,28 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            viewModel.refreshCacheUsage()
+            viewModel.refreshStorageUsage()
         }
     }
 
-    val totalUsedBytes = usedCacheBytes + torrentDownloadedBytes
-    val usedFraction = if (cacheLimitBytes > 0) (totalUsedBytes.toFloat() / cacheLimitBytes).coerceIn(0f, 1f) else 0f
-    val isNearLimit = usedFraction >= 0.8f
-    val isCritical = usedFraction >= 0.95f
+    clearTarget?.let { target ->
+        ClearConfirmDialog(
+            target = target,
+            onConfirm = {
+                when (target) {
+                    ClearTarget.Downloads    -> viewModel.clearDownloadedFiles()
+                    ClearTarget.TorrentCache -> viewModel.clearTorrentCache()
+                    ClearTarget.CloudCache   -> viewModel.clearCloudCache()
+                    ClearTarget.All          -> viewModel.clearAllCaches()
+                }
+                clearTarget = null
+            },
+            onDismiss = { clearTarget = null },
+        )
+    }
 
-    val tempFraction = (tempUsedCacheBytes.toFloat() / MediaCacheManager.DEFAULT_TEMP_MAX_BYTES).coerceIn(0f, 1f)
+    val totalBytes = downloadedBytes + torrentCacheBytes + cloudCacheBytes
+    val tempFraction = (tempCacheBytes.toFloat() / MediaCacheManager.DEFAULT_TEMP_MAX_BYTES).coerceIn(0f, 1f)
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Настройки") }) }
@@ -96,123 +102,50 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
         ) {
-            SectionHeader("Кэш загрузок")
+            SectionHeader("Использование памяти")
 
-            ListItem(
-                headlineContent = { Text("Лимит кэша медиа") },
-                supportingContent = {
-                    Column {
-                        val label = CACHE_PRESETS.minByOrNull { kotlin.math.abs(it.first - cacheLimitBytes) }?.second ?: "Custom"
-                        Text(label)
-                        Row(modifier = Modifier.fillMaxWidth()) {
-                            CACHE_PRESETS.forEach { (bytes, label) ->
-                                Button(
-                                    onClick = { viewModel.setCacheLimit(bytes) },
-                                    enabled = totalUsedBytes <= bytes,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(end = 4.dp),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                ) {
-                                    Text(
-                                        label,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
+            StorageRow(
+                label = "Скачанные файлы",
+                description = "Сохранено на устройство",
+                bytes = downloadedBytes,
+                onClear = { clearTarget = ClearTarget.Downloads },
             )
+            HorizontalDivider(modifier = Modifier.padding(start = 16.dp))
 
-            ListItem(
-                headlineContent = { Text("Использование загрузок") },
-                supportingContent = {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = "${formatBytes(totalUsedBytes)} / ${formatBytes(cacheLimitBytes)}",
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Text(
-                                text = "${(usedFraction * 100).toInt()}%",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = if (isNearLimit) FontWeight.Bold else FontWeight.Normal,
-                                color = when {
-                                    isCritical -> MaterialTheme.colorScheme.error
-                                    isNearLimit -> WarningOrange
-                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                            )
-                        }
-                        if (torrentDownloadedBytes > 0L) {
-                            Text(
-                                text = "Кэш: ${formatBytes(usedCacheBytes)}  •  Торренты: ${formatBytes(torrentDownloadedBytes)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        LinearProgressIndicator(
-                            progress = { usedFraction },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = when {
-                                isCritical -> MaterialTheme.colorScheme.error
-                                isNearLimit -> WarningOrange
-                                else -> MaterialTheme.colorScheme.primary
-                            },
-                        )
-                        if (isNearLimit) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = if (isCritical)
-                                    "Кэш почти заполнен. Очистите место или увеличьте лимит."
-                                else
-                                    "Кэш заполнен на ${(usedFraction * 100).toInt()}%. Рекомендуем очистить или увеличить лимит.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (isCritical) MaterialTheme.colorScheme.error else WarningOrange,
-                            )
-                        }
-                    }
-                }
+            StorageRow(
+                label = "Кэш торрентов",
+                description = "Стриминг-кэш в памяти приложения",
+                bytes = torrentCacheBytes,
+                onClear = { clearTarget = ClearTarget.TorrentCache },
             )
+            HorizontalDivider(modifier = Modifier.padding(start = 16.dp))
+
+            StorageRow(
+                label = "Кэш облака",
+                description = "Предзагруженные треки из облачных источников",
+                bytes = cloudCacheBytes,
+                onClear = { clearTarget = ClearTarget.CloudCache },
+            )
+            HorizontalDivider(modifier = Modifier.padding(start = 16.dp))
 
             ListItem(
-                headlineContent = { Text("Очистить кэш загрузок") },
+                headlineContent = {
+                    Text(
+                        "Итого: ${formatBytes(totalBytes)}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                },
                 trailingContent = {
-                    Button(onClick = { showClearCacheDialog = true }) { Text("Очистить") }
+                    OutlinedButton(
+                        onClick = { clearTarget = ClearTarget.All },
+                        enabled = totalBytes > 0,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error,
+                        ),
+                    ) { Text("Очистить всё") }
                 },
             )
-
-            if (showClearCacheDialog) {
-                AlertDialog(
-                    onDismissRequest = { showClearCacheDialog = false },
-                    title = { Text("Очистить кэш?") },
-                    text = {
-                        Text(
-                            "Все скачанные треки будут удалены с устройства. " +
-                                "Плейлисты сохранятся, но треки нужно будет скачать заново."
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            viewModel.clearCache()
-                            showClearCacheDialog = false
-                        }) {
-                            Text("Очистить", color = MaterialTheme.colorScheme.error)
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showClearCacheDialog = false }) { Text("Отмена") }
-                    },
-                )
-            }
 
             SectionHeader("Буфер воспроизведения")
 
@@ -231,7 +164,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = "${formatBytes(tempUsedCacheBytes)} / ${formatBytes(MediaCacheManager.DEFAULT_TEMP_MAX_BYTES)}",
+                                text = "${formatBytes(tempCacheBytes)} / ${formatBytes(MediaCacheManager.DEFAULT_TEMP_MAX_BYTES)}",
                                 modifier = Modifier.weight(1f),
                                 style = MaterialTheme.typography.bodyMedium,
                             )
@@ -251,7 +184,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 trailingContent = {
                     Button(
                         onClick = { viewModel.clearTempCache() },
-                        enabled = tempUsedCacheBytes > 0,
+                        enabled = tempCacheBytes > 0,
                     ) { Text("Очистить") }
                 },
             )
@@ -306,6 +239,75 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             }
         }
     }
+}
+
+private enum class ClearTarget { Downloads, TorrentCache, CloudCache, All }
+
+@Composable
+private fun StorageRow(
+    label: String,
+    description: String,
+    bytes: Long,
+    onClear: () -> Unit,
+) {
+    ListItem(
+        headlineContent = { Text(label) },
+        supportingContent = {
+            Column {
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    formatBytes(bytes),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        },
+        trailingContent = {
+            Button(
+                onClick = onClear,
+                enabled = bytes > 0,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                ),
+            ) { Text("Очистить") }
+        },
+    )
+}
+
+@Composable
+private fun ClearConfirmDialog(
+    target: ClearTarget,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val (title, text) = when (target) {
+        ClearTarget.Downloads -> "Удалить скачанные файлы?" to
+            "Все файлы, сохранённые на устройство, будут удалены. Плейлисты сохранятся, но треки потребуют повторного скачивания."
+        ClearTarget.TorrentCache -> "Очистить торрент-кэш?" to
+            "Кэшированные стриминг-файлы будут удалены. При следующем воспроизведении треки будут загружены заново."
+        ClearTarget.CloudCache -> "Очистить кэш облака?" to
+            "Предзагруженные треки из облачных источников будут удалены. Плейлисты сохранятся."
+        ClearTarget.All -> "Очистить всё?" to
+            "Будут удалены все скачанные файлы, торрент-кэш и кэш облака. Плейлисты сохранятся."
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(text) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Очистить", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+        },
+    )
 }
 
 @Composable
