@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -50,12 +49,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -222,6 +219,10 @@ private fun AudioPlayerContent(
                     IconButton(onClick = onOpenEqualizer) {
                         Icon(Icons.Default.Equalizer, contentDescription = "Эквалайзер")
                     }
+                    SpeedSelector(
+                        currentSpeed = playbackSpeed,
+                        onSpeedSelected = onSetPlaybackSpeed,
+                    )
                 },
             )
         },
@@ -290,15 +291,14 @@ private fun AudioPlayerContent(
                 }
             }
 
-            // Track info + controls — own horizontal padding
+            // Track title
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp),
             ) {
-                Spacer(modifier = Modifier.height(6.dp))
-
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = state.title ?: "Без названия",
                     style = MaterialTheme.typography.titleMedium,
@@ -307,91 +307,6 @@ private fun AudioPlayerContent(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                state.artist?.let {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                if (state.durationMs > 0) {
-                    val safeMax = state.durationMs.coerceAtLeast(1L).toFloat()
-                    ThinSlider(
-                        value = state.positionMs.toFloat().coerceIn(0f, safeMax),
-                        onValueChange = { onSeekTo(it.toLong()) },
-                        valueRange = 0f..safeMax,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text(
-                            text = state.positionMs.toFormattedDuration(),
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                        Text(
-                            text = state.durationMs.toFormattedDuration(),
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    IconButton(
-                        onClick = onSkipPrevious,
-                        modifier = Modifier.size(40.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.SkipPrevious,
-                            contentDescription = "Предыдущий",
-                            modifier = Modifier.size(32.dp),
-                        )
-                    }
-                    IconButton(
-                        onClick = onTogglePlayPause,
-                        modifier = Modifier.size(56.dp),
-                    ) {
-                        Icon(
-                            if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (state.isPlaying) "Пауза" else "Играть",
-                            modifier = Modifier.size(52.dp),
-                        )
-                    }
-                    IconButton(
-                        onClick = onSkipNext,
-                        modifier = Modifier.size(40.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.SkipNext,
-                            contentDescription = "Следующий",
-                            modifier = Modifier.size(32.dp),
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                SpeedSelector(
-                    currentSpeed = playbackSpeed,
-                    onSpeedSelected = onSetPlaybackSpeed,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
                 Spacer(modifier = Modifier.height(8.dp))
             }
         }
@@ -894,35 +809,6 @@ private fun VideoPlayerContent(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ThinSlider(
-    value: Float,
-    onValueChange: (Float) -> Unit,
-    valueRange: ClosedFloatingPointRange<Float>,
-    modifier: Modifier = Modifier,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    Slider(
-        value = value,
-        onValueChange = onValueChange,
-        valueRange = valueRange,
-        modifier = modifier,
-        interactionSource = interactionSource,
-        thumb = {
-            SliderDefaults.Thumb(
-                interactionSource = interactionSource,
-                thumbSize = DpSize(12.dp, 12.dp),
-            )
-        },
-        track = { state ->
-            SliderDefaults.Track(
-                sliderState = state,
-                modifier = Modifier.height(2.dp),
-            )
-        },
-    )
-}
 
 private val SPEED_OPTIONS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 
