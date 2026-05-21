@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
@@ -57,11 +58,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -615,6 +619,22 @@ private fun FolderItem(
     onAddToPlaylist: () -> Unit,
     onClearCache: () -> Unit,
 ) {
+    var showClearConfirm by remember { mutableStateOf(false) }
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            title = { Text("Удалить кэш папки?") },
+            text = { Text("Кэш папки «${item.name}» будет удалён. При следующем воспроизведении он загрузится заново.") },
+            confirmButton = {
+                TextButton(onClick = { showClearConfirm = false; onClearCache() }) {
+                    Text("Удалить", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) { Text("Отмена") }
+            },
+        )
+    }
     ListItem(
         modifier = Modifier.clickable(onClick = onClick),
         headlineContent = {
@@ -655,7 +675,7 @@ private fun FolderItem(
                     )
                 }
                 if (isCached || isCaching) {
-                    IconButton(onClick = onClearCache, modifier = Modifier.size(36.dp)) {
+                    IconButton(onClick = { showClearConfirm = true }, modifier = Modifier.size(36.dp)) {
                         Icon(
                             Icons.Default.Delete,
                             contentDescription = "Очистить кэш папки",
@@ -704,6 +724,22 @@ private fun FileItem(
     onCancelDownload: () -> Unit,
     onDeleteDownload: () -> Unit,
 ) {
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Удалить скачанный файл?") },
+            text = { Text("«${item.name}» будет удалён с устройства.") },
+            confirmButton = {
+                TextButton(onClick = { showDeleteConfirm = false; onDeleteDownload() }) {
+                    Text("Удалить", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("Отмена") }
+            },
+        )
+    }
     val isCached = cacheProgress is CacheProgress.Cached
     ListItem(
         modifier = Modifier.clickable(onClick = onClick),
@@ -788,7 +824,7 @@ private fun FileItem(
                     }
                 }
                 is DownloadProgress.Done -> {
-                    IconButton(onClick = onDeleteDownload, modifier = Modifier.size(36.dp)) {
+                    IconButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.size(36.dp)) {
                         Icon(
                             Icons.Default.CheckCircle,
                             contentDescription = "Скачано — нажмите для удаления",

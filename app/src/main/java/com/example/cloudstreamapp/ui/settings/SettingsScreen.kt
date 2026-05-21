@@ -83,6 +83,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                     ClearTarget.TorrentCache -> viewModel.clearTorrentCache()
                     ClearTarget.CloudCache   -> viewModel.clearCloudCache()
                     ClearTarget.All          -> viewModel.clearAllCaches()
+                    ClearTarget.TempCache    -> viewModel.clearTempCache()
+                    ClearTarget.ImageCache   -> viewModel.clearImageCache()
                 }
                 clearTarget = null
             },
@@ -183,7 +185,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 },
                 trailingContent = {
                     Button(
-                        onClick = { viewModel.clearTempCache() },
+                        onClick = { clearTarget = ClearTarget.TempCache },
                         enabled = tempCacheBytes > 0,
                     ) { Text("Очистить") }
                 },
@@ -205,7 +207,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 headlineContent = { Text("Очистить кэш изображений") },
                 supportingContent = { Text("Coil disk + memory cache") },
                 trailingContent = {
-                    Button(onClick = { viewModel.clearImageCache() }) { Text("Очистить") }
+                    Button(onClick = { clearTarget = ClearTarget.ImageCache }) { Text("Очистить") }
                 },
             )
 
@@ -241,7 +243,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     }
 }
 
-private enum class ClearTarget { Downloads, TorrentCache, CloudCache, All }
+private enum class ClearTarget { Downloads, TorrentCache, CloudCache, All, TempCache, ImageCache }
 
 @Composable
 private fun StorageRow(
@@ -294,6 +296,10 @@ private fun ClearConfirmDialog(
             "Предзагруженные треки из облачных источников будут удалены. Плейлисты сохранятся."
         ClearTarget.All -> "Очистить всё?" to
             "Будут удалены все скачанные файлы, торрент-кэш и кэш облака. Плейлисты сохранятся."
+        ClearTarget.TempCache -> "Очистить временный кэш?" to
+            "Буфер воспроизведения будет удалён. При следующем стриминге кэш заполнится заново."
+        ClearTarget.ImageCache -> "Очистить кэш изображений?" to
+            "Кэшированные обложки и превью будут удалены. Они загрузятся повторно при следующем открытии."
     }
     AlertDialog(
         onDismissRequest = onDismiss,
