@@ -17,10 +17,14 @@ import org.libtorrent4j.Sha1Hash
 import org.libtorrent4j.TorrentFlags
 import org.libtorrent4j.TorrentHandle
 import org.libtorrent4j.TorrentInfo
+import org.libtorrent4j.Vectors
 import org.libtorrent4j.alerts.Alert
 import org.libtorrent4j.alerts.AlertType
 import org.libtorrent4j.alerts.PieceFinishedAlert
+import org.libtorrent4j.alerts.SaveResumeDataAlert
+import org.libtorrent4j.alerts.SaveResumeDataFailedAlert
 import org.libtorrent4j.alerts.TorrentErrorAlert
+import org.libtorrent4j.swig.libtorrent as LibtorrentSwig
 import java.io.File
 import java.io.InputStream
 import java.io.RandomAccessFile
@@ -28,6 +32,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentSkipListSet
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -35,10 +40,15 @@ import javax.inject.Singleton
  * Singleton wrapper around a single libtorrent session.
  *
  * Flow for a magnet link:
- *  1. [addMagnet] — calls [SessionManager.fetchMagnet] (blocking I/O thread) to download metadata
- *  2. Starts the actual download with sequential piece priority
- *  3. [PieceFinishedAlert] listener tracks which pieces are ready
- *  4. [TorrentHttpServer] reads pieces on demand via [openInputStream], blocking per piece
+ *  1. [addMagnet] — if metadata was previously saved, restores from disk (offline-capable).
+ *     Otherwise calls [SessionManager.fetchMagnet] (blocking I/O thread) to download metadata
+ *     via DHT, then persists it for future offline use.
+ *  2. If a .fastresume file exists, the torrent is restored with full piece state — no
+ *     re-hashing required. This is also the foundation for seeding.
+ *  3. Starts sequential download with piece priorities.
+ *  4. [PieceFinishedAlert] listener tracks which pieces are ready.
+ *  5. [TorrentHttpServer] reads pieces on demand via [openInputStream], blocking per piece.
+ *  6. Resume data is saved every [PIECES_PER_RESUME_SAVE] pieces and on session shutdown.
  */
 @Singleton
 class LibtorrentEngine @Inject constructor(
@@ -49,9 +59,16 @@ class LibtorrentEngine @Inject constructor(
         private const val METADATA_TIMEOUT_SEC = 60
         private const val PIECE_TIMEOUT_MS = 30_000L
         private const val SEEK_WINDOW = 20
+        private const val PIECES_PER_RESUME_SAVE = 50
     }
 
     val savePath: File = File(context.cacheDir, "torrents").also { it.mkdirs() }
+
+    /**
+     * Stores .torrent metadata bytes and .fastresume data across app restarts.
+     * Lives in filesDir (not cacheDir) so it survives low-storage cache eviction.
+     */
+    private val metadataDir: File = File(context.filesDir, "torrent_metadata").also { it.mkdirs() }
 
     // Null when the native library is missing (wrong ABI / emulator without x86_64 .so).
     private val session: SessionManager? = try {
@@ -75,12 +92,19 @@ class LibtorrentEngine @Inject constructor(
             override fun types(): IntArray = intArrayOf(
                 AlertType.PIECE_FINISHED.swig(),
                 AlertType.TORRENT_ERROR.swig(),
+                AlertType.SAVE_RESUME_DATA.swig(),
+                AlertType.SAVE_RESUME_DATA_FAILED.swig(),
             )
 
             override fun alert(alert: Alert<*>) {
                 when (alert) {
-                    is PieceFinishedAlert -> onPieceFinished(alert)
-                    is TorrentErrorAlert  -> onTorrentError(alert)
+                    is PieceFinishedAlert       -> onPieceFinished(alert)
+                    is TorrentErrorAlert        -> onTorrentError(alert)
+                    is SaveResumeDataAlert      -> onSaveResumeData(alert)
+                    is SaveResumeDataFailedAlert -> {
+                        val hash = alert.handle().infoHash().toHex()
+                        Log.w(TAG, "Resume data save failed for $hash: ${alert.message()}")
+                    }
                 }
             }
         })
@@ -91,8 +115,15 @@ class LibtorrentEngine @Inject constructor(
     // ── Public API ────────────────────────────────────────────────────────────
 
     /**
-     * Fetches torrent metadata via DHT/trackers (blocking, up to [METADATA_TIMEOUT_SEC]s),
-     * starts sequential download, and returns the lowercase hex info hash.
+     * Opens a torrent by magnet URI.
+     *
+     * If a .torrent metadata file was saved from a previous session, the torrent is
+     * restored from disk without any DHT/network calls — enabling offline playback of
+     * previously cached content. If a matching .fastresume file also exists, piece state
+     * is restored so libtorrent skips re-hashing files.
+     *
+     * Falls back to a DHT metadata fetch when no saved metadata exists, then persists
+     * the result for future offline use.
      */
     suspend fun addMagnet(magnetUri: String): String = withContext(Dispatchers.IO) {
         val s = session ?: throw IllegalStateException(
@@ -105,28 +136,62 @@ class LibtorrentEngine @Inject constructor(
 
         if (states.containsKey(infoHash)) return@withContext infoHash
 
-        Log.d(TAG, "Fetching metadata for $infoHash …")
-        val metaBytes = s.fetchMagnet(magnetUri, METADATA_TIMEOUT_SEC, savePath)
-            ?: throw RuntimeException(
-                "Could not fetch metadata from peers within ${METADATA_TIMEOUT_SEC}s. " +
-                "Check the magnet link or try again."
-            )
+        val torrentFile = File(metadataDir, "$infoHash.torrent")
+        val resumeFile  = File(metadataDir, "$infoHash.fastresume")
 
-        val ti = TorrentInfo.bdecode(metaBytes)
-        s.download(ti, savePath)
+        val ti: TorrentInfo
+        val fromFastresume: Boolean
+
+        if (torrentFile.exists()) {
+            // ── Offline path: restore from persisted metadata ──────────────────
+            Log.d(TAG, "Restoring $infoHash from saved metadata (no DHT needed)")
+            ti = TorrentInfo.bdecode(torrentFile.readBytes())
+
+            if (resumeFile.exists()) {
+                Log.d(TAG, "Using fastresume data for $infoHash")
+                s.download(ti, savePath, resumeFile, null, null, TorrentFlags.SEQUENTIAL_DOWNLOAD)
+                fromFastresume = true
+            } else {
+                s.download(ti, savePath)
+                fromFastresume = false
+            }
+        } else {
+            // ── Online path: DHT metadata fetch ────────────────────────────────
+            Log.d(TAG, "Fetching metadata for $infoHash via DHT…")
+            val metaBytes = s.fetchMagnet(magnetUri, METADATA_TIMEOUT_SEC, savePath)
+                ?: throw RuntimeException(
+                    "Could not fetch metadata from peers within ${METADATA_TIMEOUT_SEC}s. " +
+                    "Check the magnet link or try again."
+                )
+
+            ti = TorrentInfo.bdecode(metaBytes)
+            torrentFile.writeBytes(metaBytes)
+            Log.d(TAG, "Saved .torrent metadata for future offline use ($infoHash)")
+
+            s.download(ti, savePath)
+            fromFastresume = false
+        }
 
         // Give libtorrent a moment to register the handle
         val handle = waitForHandle(ti.infoHash(), timeoutMs = 5_000L)
             ?: throw RuntimeException("TorrentHandle not found after starting download")
 
-        // Sequential download; disable all files — only download what's explicitly requested
         handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
-        for (i in 0 until ti.numFiles()) handle.filePriority(i, Priority.IGNORE)
 
-        states[infoHash] = ActiveTorrent(handle, ti, ConcurrentSkipListSet())
+        val activeTorrent = ActiveTorrent(handle, ti, ConcurrentSkipListSet())
+        states[infoHash]     = activeTorrent
         pieceWaiters[infoHash] = ConcurrentHashMap()
 
-        Log.i(TAG, "Ready: $infoHash — ${ti.numFiles()} files")
+        if (fromFastresume) {
+            // Populate our in-memory piece set from libtorrent's status so that
+            // waitForPiece() immediately recognises already-downloaded pieces.
+            populateDownloadedPieces(infoHash, handle, ti, activeTorrent)
+        } else {
+            // Fresh add: disable all files so only explicitly requested pieces download.
+            for (i in 0 until ti.numFiles()) handle.filePriority(i, Priority.IGNORE)
+        }
+
+        Log.i(TAG, "Ready: $infoHash — ${ti.numFiles()} files (fastresume=$fromFastresume)")
         infoHash
     }
 
@@ -144,15 +209,31 @@ class LibtorrentEngine @Inject constructor(
 
         if (states.containsKey(infoHash)) return@withContext infoHash
 
-        s.download(ti, savePath)
+        // Persist metadata so this torrent can also be opened offline via magnet in future
+        val torrentFile = File(metadataDir, "$infoHash.torrent")
+        if (!torrentFile.exists()) torrentFile.writeBytes(bytes)
+
+        val resumeFile = File(metadataDir, "$infoHash.fastresume")
+        if (resumeFile.exists()) {
+            s.download(ti, savePath, resumeFile, null, null, TorrentFlags.SEQUENTIAL_DOWNLOAD)
+        } else {
+            s.download(ti, savePath)
+        }
+
         val handle = waitForHandle(ti.infoHash(), timeoutMs = 5_000L)
             ?: throw RuntimeException("TorrentHandle not found after starting download")
 
         handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
-        for (i in 0 until ti.numFiles()) handle.filePriority(i, Priority.IGNORE)
 
-        states[infoHash] = ActiveTorrent(handle, ti, ConcurrentSkipListSet())
+        val activeTorrent = ActiveTorrent(handle, ti, ConcurrentSkipListSet())
+        states[infoHash]      = activeTorrent
         pieceWaiters[infoHash] = ConcurrentHashMap()
+
+        if (resumeFile.exists()) {
+            populateDownloadedPieces(infoHash, handle, ti, activeTorrent)
+        } else {
+            for (i in 0 until ti.numFiles()) handle.filePriority(i, Priority.IGNORE)
+        }
 
         Log.i(TAG, "Ready (from .torrent file): $infoHash — ${ti.numFiles()} files")
         infoHash
@@ -198,11 +279,20 @@ class LibtorrentEngine @Inject constructor(
 
     /**
      * Blocks until [pieceIndex] is downloaded or [PIECE_TIMEOUT_MS] elapses.
-     * Returns true if the piece is ready.
+     *
+     * For torrents restored from fastresume the in-memory [ActiveTorrent.downloadedPieces]
+     * set is pre-populated at startup, but as a safety net we also query libtorrent's
+     * live status so that pieces already on disk are never waited for unnecessarily.
      */
     fun waitForPiece(infoHash: String, pieceIndex: Int): Boolean {
         val state = states[infoHash] ?: return false
         if (pieceIndex in state.downloadedPieces) return true
+
+        // Safety net: piece may already be on disk (fastresume restore or re-added torrent)
+        if (isPieceDownloadedInSession(state, pieceIndex)) {
+            state.downloadedPieces.add(pieceIndex)
+            return true
+        }
 
         val sem = Semaphore(0)
         pieceWaiters[infoHash]
@@ -260,7 +350,7 @@ class LibtorrentEngine @Inject constructor(
     fun streamingCacheSizeBytes(): Long =
         savePath.walkTopDown().filter { it.isFile }.sumOf { it.length() }
 
-    /** Removes all active torrents and deletes everything in [savePath]. */
+    /** Removes all active torrents and deletes everything in [savePath] and [metadataDir]. */
     fun clearStreamingCache() {
         states.keys.toList().forEach { hash ->
             val state = states.remove(hash) ?: return@forEach
@@ -269,7 +359,9 @@ class LibtorrentEngine @Inject constructor(
         }
         savePath.deleteRecursively()
         savePath.mkdirs()
-        Log.i(TAG, "Streaming cache cleared")
+        metadataDir.deleteRecursively()
+        metadataDir.mkdirs()
+        Log.i(TAG, "Streaming cache and metadata cleared")
     }
 
     /** Sets [fileIndex] priority back to IGNORE so libtorrent won't re-download it. */
@@ -281,16 +373,31 @@ class LibtorrentEngine @Inject constructor(
     /** Stops downloading a torrent and cleans up all associated state. */
     fun removeTorrent(infoHash: String) {
         val state = states.remove(infoHash) ?: return
+        // Save resume data before removal so the next open skips re-hashing
+        if (state.handle.isValid) {
+            try { state.handle.saveResumeData(TorrentHandle.SAVE_INFO_DICT) } catch (_: Exception) {}
+        }
         session?.remove(state.handle)
         pieceWaiters.remove(infoHash)
         Log.d(TAG, "Removed torrent $infoHash")
     }
 
     fun shutdown() {
-        if (session?.isRunning == true) {
-            session.stop()
-            Log.i(TAG, "libtorrent session stopped")
+        val s = session ?: return
+        if (!s.isRunning) return
+
+        // Request resume data for all active torrents; alerts will be processed
+        // by the still-running listener before session.stop() drains it.
+        states.forEach { (_, state) ->
+            if (state.handle.isValid) {
+                try { state.handle.saveResumeData(TorrentHandle.SAVE_INFO_DICT) } catch (_: Exception) {}
+            }
         }
+        // Brief pause to let SAVE_RESUME_DATA alerts arrive and be written to disk
+        Thread.sleep(800)
+
+        s.stop()
+        Log.i(TAG, "libtorrent session stopped")
     }
 
     /** Returns fraction [0.0, 1.0] of pieces already downloaded for [infoHash]. */
@@ -383,14 +490,84 @@ class LibtorrentEngine @Inject constructor(
         return firstPiece to lastPiece
     }
 
+    /**
+     * Reads libtorrent's live piece bitfield and adds all already-downloaded pieces to
+     * [ActiveTorrent.downloadedPieces]. Called once after restoring from fastresume so
+     * that [waitForPiece] never blocks on pieces that are already on disk.
+     */
+    private fun populateDownloadedPieces(
+        infoHash: String,
+        handle: TorrentHandle,
+        ti: TorrentInfo,
+        state: ActiveTorrent,
+    ) {
+        try {
+            val status = handle.status(TorrentHandle.QUERY_PIECES)
+            val bitfield = status.pieces()
+            val numPieces = ti.numPieces()
+            var count = 0
+            for (i in 0 until numPieces) {
+                if (bitfield.getBit(i)) {
+                    state.downloadedPieces.add(i)
+                    count++
+                }
+            }
+            Log.d(TAG, "Populated $count/$numPieces downloaded pieces for $infoHash")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not populate piece state for $infoHash: ${e.message}")
+        }
+    }
+
+    /**
+     * Queries libtorrent directly for a single piece. Used as a fallback in [waitForPiece]
+     * for pieces that may be on disk but not yet in our in-memory set.
+     */
+    private fun isPieceDownloadedInSession(state: ActiveTorrent, pieceIndex: Int): Boolean {
+        return try {
+            if (!state.handle.isValid) return false
+            val status = state.handle.status(TorrentHandle.QUERY_PIECES)
+            status.pieces().getBit(pieceIndex)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Serialises [AddTorrentParams] from a [SaveResumeDataAlert] and writes it to disk. */
+    private fun onSaveResumeData(alert: SaveResumeDataAlert) {
+        val hash = alert.handle().infoHash().toHex()
+        try {
+            val params = alert.params().swig()
+            val vec    = LibtorrentSwig.write_resume_data_buf_ex(params)
+            val bytes  = Vectors.byte_vector2bytes(vec)
+            File(metadataDir, "$hash.fastresume").writeBytes(bytes)
+            Log.d(TAG, "Fastresume saved for $hash (${bytes.size} B)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to write fastresume for $hash: ${e.message}")
+        }
+    }
+
+    /** Requests an async resume-data save for [infoHash]. Noop if not active. */
+    private fun requestSaveResumeData(infoHash: String) {
+        val handle = states[infoHash]?.handle ?: return
+        if (!handle.isValid) return
+        try { handle.saveResumeData(TorrentHandle.SAVE_INFO_DICT) } catch (_: Exception) {}
+    }
+
     // ── Alert handlers ────────────────────────────────────────────────────────
 
     private fun onPieceFinished(alert: PieceFinishedAlert) {
-        val hash = alert.handle().infoHash().toHex()
+        val hash  = alert.handle().infoHash().toHex()
         val piece = alert.pieceIndex()
+        val state = states[hash] ?: return
 
-        states[hash]?.downloadedPieces?.add(piece)
+        state.downloadedPieces.add(piece)
         pieceWaiters[hash]?.remove(piece)?.forEach { it.release() }
+
+        // Persist resume data periodically so restarts skip re-hashing
+        if (state.piecesSinceLastSave.incrementAndGet() >= PIECES_PER_RESUME_SAVE) {
+            state.piecesSinceLastSave.set(0)
+            requestSaveResumeData(hash)
+        }
     }
 
     private fun onTorrentError(alert: TorrentErrorAlert) {
@@ -424,6 +601,7 @@ internal data class ActiveTorrent(
     val handle: TorrentHandle,
     val info: TorrentInfo,
     val downloadedPieces: ConcurrentSkipListSet<Int>,
+    val piecesSinceLastSave: AtomicInteger = AtomicInteger(0),
 )
 
 // ── Blocking InputStream over a partially-downloaded file ─────────────────────
