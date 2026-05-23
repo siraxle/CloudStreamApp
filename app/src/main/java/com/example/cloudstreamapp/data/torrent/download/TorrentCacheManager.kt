@@ -127,7 +127,16 @@ class TorrentCacheManager @Inject constructor(
         val cachedKeys = cachedFileDao.getKeysForHash(infoHash).toSet()
         if (cachedKeys.isEmpty()) return
 
-        engine.listFiles(infoHash).filter { it.name.isAudioFile() }.forEach { file ->
+        val files = engine.listFiles(infoHash).filter { it.name.isAudioFile() }
+        if (files.isEmpty()) {
+            // Engine doesn't have this torrent yet (e.g. called before addMagnet/addTorrentBytes
+            // from the SavedStateHandle restoration path after a background process kill).
+            // Clear the guard so restoration is retried once the torrent is properly opened.
+            restoredHashes.remove(infoHash)
+            return
+        }
+
+        files.forEach { file ->
             val key = "$infoHash:${file.index}"
             if (_progress.value.containsKey(key)) return@forEach
             if (key !in cachedKeys) return@forEach
@@ -155,7 +164,13 @@ class TorrentCacheManager @Inject constructor(
         if (!resumedHashes.add(infoHash)) return
         val cachedKeys = cachedFileDao.getKeysForHash(infoHash).toSet()
 
-        engine.listFiles(infoHash).filter { it.name.isAudioFile() }.forEach { file ->
+        val files = engine.listFiles(infoHash).filter { it.name.isAudioFile() }
+        if (files.isEmpty()) {
+            resumedHashes.remove(infoHash)
+            return
+        }
+
+        files.forEach { file ->
             val key = "$infoHash:${file.index}"
             if (_progress.value[key] is CacheProgress.Cached) return@forEach
             if (jobs.containsKey(key)) return@forEach
@@ -191,12 +206,11 @@ class TorrentCacheManager @Inject constructor(
                 engine.resetFilePriority(infoHash, file.index)
             }
 
-        restoredHashes.remove(infoHash)
-        resumedHashes.remove(infoHash)
-
         if (keysToDelete.isNotEmpty()) {
             cachedFileDao.deleteByKeys(keysToDelete)
         }
+        restoredHashes.remove(infoHash)
+        resumedHashes.remove(infoHash)
         Log.i(TAG, "Folder cache cleared: '$folderPath' in $infoHash")
     }
 
