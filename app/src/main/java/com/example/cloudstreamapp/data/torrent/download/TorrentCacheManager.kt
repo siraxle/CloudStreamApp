@@ -45,6 +45,18 @@ class TorrentCacheManager @Inject constructor(
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    init {
+        // After libtorrent completes its hash check the verified piece bitfield becomes
+        // accurate. Re-run resumePendingCaching so files missed in the initial call
+        // (before the check finished, when no fastresume was present) are started.
+        scope.launch {
+            engine.torrentCheckedFlow.collect { infoHash ->
+                resumedHashes.remove(infoHash)
+                resumePendingCaching(infoHash)
+            }
+        }
+    }
+
     // key = "$infoHash:$fileIndex"
     private val _progress = MutableStateFlow<Map<String, CacheProgress>>(emptyMap())
     val progress: StateFlow<Map<String, CacheProgress>> = _progress.asStateFlow()
@@ -176,9 +188,11 @@ class TorrentCacheManager @Inject constructor(
             if (jobs.containsKey(key)) return@forEach
             if (key in cachedKeys) return@forEach
 
-            // If the file exists on disk it was being cached when the app was killed.
-            val diskFile = engine.getFilePath(infoHash, file.index) ?: return@forEach
-            if (!diskFile.exists()) return@forEach
+            // Only resume files that libtorrent has actually started downloading — i.e. at
+            // least one of the file's pieces is in the verified bitfield. Checking the disk
+            // file alone is not sufficient because libtorrent can write bytes from a shared
+            // boundary piece to a neighbour file even when that file has IGNORE priority.
+            if (!engine.hasAnyDownloadedPieceForFile(infoHash, file.index)) return@forEach
 
             Log.d(TAG, "Resuming partial cache: $key (${file.name})")
             startCachingJob(infoHash, file.index, file.name, key)

@@ -24,6 +24,7 @@ import com.example.cloudstreamapp.domain.model.CacheStatus
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.CloudPath
 import com.example.cloudstreamapp.domain.model.CloudType
+import com.example.cloudstreamapp.domain.torrent.CacheProgress
 import com.example.cloudstreamapp.domain.torrent.TorrentResult
 import com.example.cloudstreamapp.domain.usecase.GetStreamUrlUseCase
 import com.example.cloudstreamapp.domain.usecase.ListFolderUseCase
@@ -244,12 +245,19 @@ class PlayerViewModel @Inject constructor(
         val infoHash = parts[0]
         val fileIndex = parts[1].toIntOrNull() ?: return
 
-        // Cache the folder containing this track (non-blocking — runs in its own scope)
         val folderPath = torrentEngine.listFiles(infoHash)
             .find { it.index == fileIndex }
             ?.relativePath?.substringBeforeLast("/", "") ?: ""
         torrentCacheManager.cacheFolder(infoHash, folderPath)
         autoSaveTorrentIfAbsent(infoHash, folderPath)
+
+        // File is already fully on disk — skip the pre-buffer spinner. Just ensure the file
+        // is not at IGNORE priority so the HTTP server can serve pieces while the hash check
+        // completes in the background.
+        if (torrentCacheManager.getProgress(infoHash, fileIndex) is CacheProgress.Cached) {
+            torrentEngine.enableFileDownload(infoHash, fileIndex)
+            return
+        }
 
         torrentEngine.boostFilePriority(infoHash, fileIndex)
         withContext(Dispatchers.Main) {

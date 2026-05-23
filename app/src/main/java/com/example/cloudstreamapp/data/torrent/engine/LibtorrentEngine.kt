@@ -23,6 +23,7 @@ import org.libtorrent4j.alerts.AlertType
 import org.libtorrent4j.alerts.PieceFinishedAlert
 import org.libtorrent4j.alerts.SaveResumeDataAlert
 import org.libtorrent4j.alerts.SaveResumeDataFailedAlert
+import org.libtorrent4j.alerts.TorrentCheckedAlert
 import org.libtorrent4j.alerts.TorrentErrorAlert
 import org.libtorrent4j.swig.libtorrent as LibtorrentSwig
 import java.io.File
@@ -35,6 +36,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 /**
  * Singleton wrapper around a single libtorrent session.
@@ -87,10 +91,15 @@ class LibtorrentEngine @Inject constructor(
     // Piece waiters: hash → pieceIndex → waiting semaphores
     private val pieceWaiters = ConcurrentHashMap<String, ConcurrentHashMap<Int, MutableList<Semaphore>>>()
 
+    // Emits infoHash whenever libtorrent finishes hash-checking a torrent.
+    private val _torrentChecked = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    val torrentCheckedFlow: SharedFlow<String> = _torrentChecked.asSharedFlow()
+
     init {
         session?.addListener(object : AlertListener {
             override fun types(): IntArray = intArrayOf(
                 AlertType.PIECE_FINISHED.swig(),
+                AlertType.TORRENT_CHECKED.swig(),
                 AlertType.TORRENT_ERROR.swig(),
                 AlertType.SAVE_RESUME_DATA.swig(),
                 AlertType.SAVE_RESUME_DATA_FAILED.swig(),
@@ -99,6 +108,7 @@ class LibtorrentEngine @Inject constructor(
             override fun alert(alert: Alert<*>) {
                 when (alert) {
                     is PieceFinishedAlert       -> onPieceFinished(alert)
+                    is TorrentCheckedAlert      -> onTorrentChecked(alert)
                     is TorrentErrorAlert        -> onTorrentError(alert)
                     is SaveResumeDataAlert      -> onSaveResumeData(alert)
                     is SaveResumeDataFailedAlert -> {
@@ -299,13 +309,24 @@ class LibtorrentEngine @Inject constructor(
             ?.getOrPut(pieceIndex) { mutableListOf() }
             ?.add(sem)
 
-        // Re-check after registering to avoid a race with onPieceFinished
-        return if (pieceIndex in state.downloadedPieces) {
+        // Re-check after registering to avoid a race with onPieceFinished / onTorrentChecked
+        if (pieceIndex in state.downloadedPieces) {
             sem.release()
-            true
-        } else {
-            sem.tryAcquire(PIECE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            return true
         }
+
+        // Poll the live bitfield every 500 ms so that a piece verified by the hash check
+        // (but not yet signalled via onPieceFinished) unblocks within 500 ms rather than
+        // waiting the full PIECE_TIMEOUT_MS.
+        val deadline = System.currentTimeMillis() + PIECE_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            if (sem.tryAcquire(500, TimeUnit.MILLISECONDS)) return true
+            if (isPieceDownloadedInSession(state, pieceIndex)) {
+                state.downloadedPieces.add(pieceIndex)
+                return true
+            }
+        }
+        return false
     }
 
     /**
@@ -382,6 +403,20 @@ class LibtorrentEngine @Inject constructor(
         Log.d(TAG, "Removed torrent $infoHash")
     }
 
+    /**
+     * Requests fastresume saves for all active torrents without stopping the session.
+     * Call this when the app goes to background so the latest piece state is persisted
+     * before Android kills the process.
+     */
+    fun saveAllResumeData() {
+        states.forEach { (_, state) ->
+            if (state.handle.isValid) {
+                try { state.handle.saveResumeData(TorrentHandle.SAVE_INFO_DICT) } catch (_: Exception) {}
+            }
+        }
+        Log.d(TAG, "Requested resume data save for ${states.size} active torrent(s)")
+    }
+
     fun shutdown() {
         val s = session ?: return
         if (!s.isRunning) return
@@ -435,15 +470,39 @@ class LibtorrentEngine @Inject constructor(
     fun waitForInitialPiecesFlow(infoHash: String, fileIndex: Int, targetPieces: Int): Flow<Float> = flow {
         val state = states[infoHash]
         if (state == null) { emit(1f); return@flow }
-        val (firstPiece, _) = filePieceRange(state, fileIndex) ?: run { emit(1f); return@flow }
-        val endPiece = firstPiece + targetPieces
+        val (firstPiece, lastPiece) = filePieceRange(state, fileIndex) ?: run { emit(1f); return@flow }
+        // Cap to the actual piece count of the file so small files (< targetPieces pieces)
+        // don't loop forever waiting for pieces that can never arrive.
+        val actualTarget = minOf(targetPieces, lastPiece - firstPiece + 1)
+        val endPiece = firstPiece + actualTarget
         while (true) {
             val ready = state.downloadedPieces.subSet(firstPiece, endPiece).size
-            emit(minOf(ready.toFloat() / targetPieces, 1f))
-            if (ready >= targetPieces) return@flow
+            emit(minOf(ready.toFloat() / actualTarget, 1f))
+            if (ready >= actualTarget) return@flow
             delay(200)
         }
     }.flowOn(Dispatchers.IO)
+
+    /**
+     * Returns true if libtorrent has at least one downloaded (or pending) piece that
+     * belongs exclusively or partially to [fileIndex]. Used by [TorrentCacheManager] to
+     * distinguish files that were genuinely started from freshly-allocated stubs.
+     *
+     * Checks both the in-memory [ActiveTorrent.downloadedPieces] set (accurate after
+     * [TorrentCheckedAlert]) and libtorrent's live bitfield as a fallback.
+     */
+    fun hasAnyDownloadedPieceForFile(infoHash: String, fileIndex: Int): Boolean {
+        val state = states[infoHash] ?: return false
+        val (firstPiece, lastPiece) = filePieceRange(state, fileIndex) ?: return false
+        if (state.downloadedPieces.subSet(firstPiece, lastPiece + 1).isNotEmpty()) return true
+        return try {
+            val bitfield = state.handle.status(TorrentHandle.QUERY_PIECES).pieces()
+            for (i in firstPiece..lastPiece) {
+                if (bitfield.getBit(i)) return true
+            }
+            false
+        } catch (_: Exception) { false }
+    }
 
     /**
      * Enables sequential background downloading of [fileIndex] by setting its file-level
@@ -530,6 +589,34 @@ class LibtorrentEngine @Inject constructor(
         } catch (_: Exception) {
             false
         }
+    }
+
+    /**
+     * Fires when libtorrent finishes hash-checking a torrent (both on fresh add without
+     * fastresume and after fastresume validation). Populates [ActiveTorrent.downloadedPieces]
+     * with every verified piece and releases any [waitForPiece] semaphores for those pieces.
+     * This ensures that pieces already on disk are never waited for unnecessarily on restart.
+     */
+    private fun onTorrentChecked(alert: TorrentCheckedAlert) {
+        val hash  = alert.handle().infoHash().toHex()
+        val state = states[hash] ?: return
+        try {
+            val status   = alert.handle().status(TorrentHandle.QUERY_PIECES)
+            val bitfield = status.pieces()
+            val numPieces = state.info.numPieces()
+            var newCount = 0
+            for (i in 0 until numPieces) {
+                if (bitfield.getBit(i) && state.downloadedPieces.add(i)) {
+                    // Release any threads blocked in waitForPiece() for this piece
+                    pieceWaiters[hash]?.remove(i)?.forEach { it.release() }
+                    newCount++
+                }
+            }
+            if (newCount > 0) Log.d(TAG, "TorrentChecked: populated $newCount new pieces for $hash")
+        } catch (e: Exception) {
+            Log.w(TAG, "onTorrentChecked: could not read piece state for $hash: ${e.message}")
+        }
+        _torrentChecked.tryEmit(hash)
     }
 
     /** Serialises [AddTorrentParams] from a [SaveResumeDataAlert] and writes it to disk. */
