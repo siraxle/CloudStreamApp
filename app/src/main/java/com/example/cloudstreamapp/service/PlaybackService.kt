@@ -107,10 +107,16 @@ class PlaybackService : MediaSessionService() {
                 val idx = player.currentMediaItemIndex
                 if (idx < 0) return
 
-                val safeId = currentItem.mediaId
-                    .replace(Regex("[^a-zA-Z0-9._-]"), "_")
-                    .take(64)
-                    .ifEmpty { "track_$idx" }
+                val safeId = try {
+                    java.security.MessageDigest.getInstance("MD5")
+                        .digest(currentItem.mediaId.toByteArray(Charsets.UTF_8))
+                        .joinToString("") { "%02x".format(it) }
+                } catch (_: Exception) {
+                    currentItem.mediaId
+                        .replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                        .take(64)
+                        .ifEmpty { "track_$idx" }
+                }
 
                 serviceScope.launch {
                     try {
