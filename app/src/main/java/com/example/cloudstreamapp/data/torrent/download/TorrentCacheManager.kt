@@ -38,6 +38,7 @@ import javax.inject.Singleton
 class TorrentCacheManager @Inject constructor(
     private val engine: LibtorrentEngine,
     private val cachedFileDao: TorrentCachedFileDao,
+    private val pendingCacheDao: TorrentPendingCacheDao,
 ) {
     companion object {
         private const val TAG = "TorrentCacheManager"
@@ -166,16 +167,23 @@ class TorrentCacheManager @Inject constructor(
     }
 
     /**
-     * Resumes caching for any audio file that is on disk (was being downloaded in a prior
-     * session) but is not yet recorded as fully cached in the DB. Call this after
+     * Resumes caching for audio files that were explicitly requested in a prior session
+     * (recorded in [TorrentPendingCacheDao]) but not yet finished. Call this after
      * [restoreCacheState] when the user reopens a torrent folder after a restart.
+     *
+     * Only files present in the pending-cache table are resumed. This prevents boundary
+     * pieces — pieces shared between adjacent files in the torrent layout — from
+     * accidentally starting caching in neighboring folders.
      *
      * Must be called on a non-main thread (uses blocking Room queries).
      */
     fun resumePendingCaching(infoHash: String) {
         if (!resumedHashes.add(infoHash)) return
-        val cachedKeys = cachedFileDao.getKeysForHash(infoHash).toSet()
+        val pendingKeys = pendingCacheDao.getKeysForHash(infoHash).toSet()
 
+        if (pendingKeys.isEmpty()) return
+
+        val cachedKeys = cachedFileDao.getKeysForHash(infoHash).toSet()
         val files = engine.listFiles(infoHash).filter { it.name.isAudioFile() }
         if (files.isEmpty()) {
             resumedHashes.remove(infoHash)
@@ -184,15 +192,10 @@ class TorrentCacheManager @Inject constructor(
 
         files.forEach { file ->
             val key = "$infoHash:${file.index}"
+            if (key !in pendingKeys) return@forEach
             if (_progress.value[key] is CacheProgress.Cached) return@forEach
             if (jobs.containsKey(key)) return@forEach
             if (key in cachedKeys) return@forEach
-
-            // Only resume files that libtorrent has actually started downloading — i.e. at
-            // least one of the file's pieces is in the verified bitfield. Checking the disk
-            // file alone is not sufficient because libtorrent can write bytes from a shared
-            // boundary piece to a neighbour file even when that file has IGNORE priority.
-            if (!engine.hasAnyDownloadedPieceForFile(infoHash, file.index)) return@forEach
 
             Log.d(TAG, "Resuming partial cache: $key (${file.name})")
             startCachingJob(infoHash, file.index, file.name, key)
@@ -222,6 +225,7 @@ class TorrentCacheManager @Inject constructor(
 
         if (keysToDelete.isNotEmpty()) {
             cachedFileDao.deleteByKeys(keysToDelete)
+            pendingCacheDao.deleteByKeys(keysToDelete)
         }
         restoredHashes.remove(infoHash)
         resumedHashes.remove(infoHash)
@@ -240,6 +244,7 @@ class TorrentCacheManager @Inject constructor(
         restoredHashes.clear()
         resumedHashes.clear()
         cachedFileDao.deleteAll()
+        pendingCacheDao.deleteAll()
         engine.clearStreamingCache()
         Log.i(TAG, "All streaming cache cleared")
     }
@@ -272,6 +277,7 @@ class TorrentCacheManager @Inject constructor(
         engine.enableFileDownload(infoHash, fileIndex)
         engine.boostFilePriority(infoHash, fileIndex)
         _progress.update { it + (key to CacheProgress.Caching(0f)) }
+        pendingCacheDao.insert(TorrentPendingCacheEntity(key, infoHash, fileIndex))
 
         jobs[key] = scope.launch {
             try {
@@ -285,6 +291,7 @@ class TorrentCacheManager @Inject constructor(
                 Log.i(TAG, "Cached: $key ($fileName)")
             } finally {
                 jobs.remove(key)
+                pendingCacheDao.deleteByKey(key)
             }
         }
     }

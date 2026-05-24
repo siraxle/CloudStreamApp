@@ -722,8 +722,12 @@ class PlayerViewModel @Inject constructor(
      * Must be called from the main thread. No-op if the same folder was already scanned.
      */
     private fun triggerCoverScan(itemPath: CloudPath) {
-        val folderRelPath = itemPath.relativePath
-            .substringBeforeLast('/').takeIf { it.isNotEmpty() } ?: "/"
+        // For torrents, relativePath is already the folder; for cloud providers it's a file path.
+        val folderRelPath = if (itemPath.cloudType == CloudType.TORRENT) {
+            itemPath.relativePath
+        } else {
+            itemPath.relativePath.substringBeforeLast('/').takeIf { it.isNotEmpty() } ?: "/"
+        }
         val folderKey = "${itemPath.cloudType}:${itemPath.sourceId}:$folderRelPath"
         if (folderKey == lastScannedFolderKey) return
         lastScannedFolderKey = folderKey
@@ -756,8 +760,48 @@ class PlayerViewModel @Inject constructor(
 
     /** Fetches a folder listing and collects all image files from it and its subfolders. */
     private suspend fun collectCoverImagesFromPath(folderPath: CloudPath): List<CloudItem> {
+        if (folderPath.cloudType == CloudType.TORRENT) {
+            return collectTorrentCoverImages(folderPath)
+        }
         val items = runCatching { listFolder(folderPath).first() }.getOrDefault(emptyList())
         return collectCoverImages(items)
+    }
+
+    /**
+     * Scans a torrent folder for image files using the engine directly, bypassing
+     * [TorrentCloudProvider.buildFolderItems] which filters to audio-only.
+     */
+    private fun collectTorrentCoverImages(folderPath: CloudPath): List<CloudItem> {
+        val sourceId = folderPath.sourceId
+        val infoHash = extractInfoHash(sourceId)
+            ?: if (sourceId.startsWith("torrent:")) sourceId.removePrefix("torrent:") else return emptyList()
+        val allFiles = torrentEngine.listFiles(infoHash)
+        val relPath = if (folderPath.relativePath == "/") "" else folderPath.relativePath
+
+        fun imagesAt(dir: String): List<CloudItem> {
+            val prefix = if (dir.isEmpty()) "" else "$dir/"
+            return allFiles
+                .filter { it.name.isImageFile() }
+                .filter { file ->
+                    if (prefix.isNotEmpty() && !file.relativePath.startsWith(prefix)) return@filter false
+                    val remaining = if (prefix.isEmpty()) file.relativePath
+                                    else file.relativePath.removePrefix(prefix)
+                    !remaining.contains('/')
+                }
+                .sortedBy { it.name.lowercase() }
+                .map { file ->
+                    CloudItem(
+                        id = "$infoHash:${file.index}",
+                        name = file.name,
+                        path = CloudPath(sourceId = sourceId, relativePath = dir, cloudType = CloudType.TORRENT),
+                        type = CloudItem.ItemType.FILE,
+                        sizeBytes = file.sizeBytes,
+                        cacheStatus = CacheStatus.REMOTE,
+                    )
+                }
+        }
+
+        return imagesAt(relPath)
     }
 
     /** Collects all image files from [rootItems] and one level of subfolders. */

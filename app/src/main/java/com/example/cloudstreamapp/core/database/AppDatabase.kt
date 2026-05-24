@@ -22,6 +22,8 @@ import com.example.cloudstreamapp.data.torrent.download.TorrentCachedFileDao
 import com.example.cloudstreamapp.data.torrent.download.TorrentCachedFileEntity
 import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadDao
 import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadEntity
+import com.example.cloudstreamapp.data.torrent.download.TorrentPendingCacheDao
+import com.example.cloudstreamapp.data.torrent.download.TorrentPendingCacheEntity
 import com.example.cloudstreamapp.data.torrent.local.LocalTorrentDao
 import com.example.cloudstreamapp.data.torrent.local.LocalTorrentEntity
 import com.example.cloudstreamapp.data.torrent.saved.SavedTorrentDao
@@ -39,10 +41,11 @@ import com.example.cloudstreamapp.data.torrent.saved.SavedTorrentEntity
         FavoriteTrackEntity::class,
         TorrentDownloadEntity::class,
         TorrentCachedFileEntity::class,
+        TorrentPendingCacheEntity::class,
         LocalTorrentEntity::class,
         SavedTorrentEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -54,6 +57,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun favoritePlaylistDao(): FavoritePlaylistDao
     abstract fun torrentDownloadDao(): TorrentDownloadDao
     abstract fun torrentCachedFileDao(): TorrentCachedFileDao
+    abstract fun torrentPendingCacheDao(): TorrentPendingCacheDao
     abstract fun localTorrentDao(): LocalTorrentDao
     abstract fun savedTorrentDao(): SavedTorrentDao
 
@@ -182,6 +186,23 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_torrent_cached_files_infoHash ON torrent_cached_files(infoHash)"
+                )
+            }
+        }
+
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS torrent_pending_cache (
+                        `key` TEXT NOT NULL PRIMARY KEY,
+                        infoHash TEXT NOT NULL,
+                        fileIndex INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_torrent_pending_cache_infoHash ON torrent_pending_cache(infoHash)"
                 )
             }
         }
