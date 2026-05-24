@@ -720,21 +720,28 @@ private class TorrentInputStream(
 
     override fun read(): Int {
         if (remaining <= 0L) return -1
-        ensurePieceReady(filePos)
+        waitForPieceRange(filePos, filePos)
         return raf.read().also { b -> if (b != -1) { filePos++; remaining-- } }
     }
 
     override fun read(b: ByteArray, off: Int, len: Int): Int {
         if (remaining <= 0L) return -1
         val toRead = minOf(len.toLong(), remaining).toInt()
-        ensurePieceReady(filePos)
+        // Wait for every piece covered by [filePos, filePos+toRead-1].
+        // Without this, reads that cross a piece boundary return pre-allocated zeros
+        // from libtorrent for the not-yet-downloaded trailing piece, which manifests as
+        // a black/corrupted image when Coil reads the whole file in large chunks.
+        waitForPieceRange(filePos, filePos + toRead - 1)
         return raf.read(b, off, toRead).also { n -> if (n > 0) { filePos += n; remaining -= n } }
     }
 
     override fun close() = raf.close()
 
-    private fun ensurePieceReady(byteOffsetInFile: Long) {
-        val piece = engine.byteToPieceIndex(infoHash, fileIndex, byteOffsetInFile)
-        engine.waitForPiece(infoHash, piece)
+    private fun waitForPieceRange(fromOffset: Long, toOffset: Long) {
+        val firstPiece = engine.byteToPieceIndex(infoHash, fileIndex, fromOffset)
+        val lastPiece  = engine.byteToPieceIndex(infoHash, fileIndex, toOffset)
+        for (piece in firstPiece..lastPiece) {
+            engine.waitForPiece(infoHash, piece)
+        }
     }
 }

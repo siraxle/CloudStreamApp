@@ -770,6 +770,10 @@ class PlayerViewModel @Inject constructor(
     /**
      * Scans a torrent folder for image files using the engine directly, bypassing
      * [TorrentCloudProvider.buildFolderItems] which filters to audio-only.
+     * Also scans immediate subdirectories (e.g. "Artwork/", "Scans/") to match
+     * the behaviour of [collectCoverImages] for cloud providers.
+     * Enables download priority for every found image file so the HTTP server
+     * can serve them — by default all files start at Priority.IGNORE.
      */
     private fun collectTorrentCoverImages(folderPath: CloudPath): List<CloudItem> {
         val sourceId = folderPath.sourceId
@@ -801,7 +805,36 @@ class PlayerViewModel @Inject constructor(
                 }
         }
 
-        return imagesAt(relPath)
+        val result = imagesAt(relPath).toMutableList()
+
+        // Also check immediate subdirectories that contain images (e.g. "Album/Artwork/")
+        val prefix = if (relPath.isEmpty()) "" else "$relPath/"
+        val imageSubdirs = allFiles
+            .filter { it.name.isImageFile() }
+            .mapNotNull { file ->
+                if (prefix.isNotEmpty() && !file.relativePath.startsWith(prefix)) return@mapNotNull null
+                val remaining = if (prefix.isEmpty()) file.relativePath
+                                else file.relativePath.removePrefix(prefix)
+                val slashIdx = remaining.indexOf('/')
+                if (slashIdx > 0) {
+                    val sub = remaining.substring(0, slashIdx)
+                    if (relPath.isEmpty()) sub else "$relPath/$sub"
+                } else null
+            }
+            .distinct()
+        for (subDir in imageSubdirs) result += imagesAt(subDir)
+
+        // Enable downloading for every image file found — they start at Priority.IGNORE by
+        // default and the HTTP server would otherwise block forever waiting for pieces.
+        for (item in result) {
+            val parts = item.id.split(":")
+            if (parts.size >= 2) {
+                val idx = parts[1].toIntOrNull() ?: continue
+                torrentEngine.enableFileDownload(infoHash, idx)
+            }
+        }
+
+        return result
     }
 
     /** Collects all image files from [rootItems] and one level of subfolders. */

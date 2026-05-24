@@ -350,12 +350,27 @@ private fun CoverArea(
                 }
             }
         }
-        embeddedArtUri != null -> AsyncImage(
-            model = embeddedArtUri,
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
-            modifier = modifier,
-        )
+        embeddedArtUri != null -> {
+            var artFailed by remember(embeddedArtUri) { mutableStateOf(false) }
+            if (artFailed) {
+                Box(modifier = modifier, contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.MusicNote,
+                        contentDescription = null,
+                        modifier = Modifier.size(96.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                    )
+                }
+            } else {
+                AsyncImage(
+                    model = embeddedArtUri,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = modifier,
+                    onError = { artFailed = true },
+                )
+            }
+        }
         else -> Box(modifier = modifier, contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = Icons.Default.MusicNote,
@@ -374,6 +389,7 @@ private fun CoverImagePage(
 ) {
     var url by remember(item.id) { mutableStateOf<String?>(null) }
     var loading by remember(item.id) { mutableStateOf(true) }
+    var loadFailed by remember(item.id) { mutableStateOf(false) }
     LaunchedEffect(item.id) {
         url = onResolveCoverUrl(item)
         loading = false
@@ -386,11 +402,18 @@ private fun CoverImagePage(
     ) {
         when {
             loading -> CircularProgressIndicator(color = Color.White)
-            url != null -> AsyncImage(
+            url != null && !loadFailed -> AsyncImage(
                 model = url,
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize(),
+                onError = { loadFailed = true },
+            )
+            else -> Icon(
+                imageVector = Icons.Default.MusicNote,
+                contentDescription = null,
+                modifier = Modifier.size(72.dp),
+                tint = Color.White.copy(alpha = 0.3f),
             )
         }
     }
