@@ -17,7 +17,7 @@ class TorrentProviderConfig @Inject constructor(
         booleanPreferencesKey("torrent_provider_${source.name.lowercase()}")
 
     fun isEnabled(source: TorrentSource): Flow<Boolean> =
-        dataStore.data.map { prefs -> prefs[keyFor(source)] ?: false }
+        dataStore.data.map { prefs -> prefs[keyFor(source)] ?: true }
 
     suspend fun setEnabled(source: TorrentSource, enabled: Boolean) {
         dataStore.edit { prefs -> prefs[keyFor(source)] = enabled }

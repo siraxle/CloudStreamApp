@@ -3,6 +3,13 @@ package com.example.cloudstreamapp.data.torrent.provider
 import java.net.URLEncoder
 
 private val DEFAULT_TRACKERS = listOf(
+    // HTTP/TCP trackers — survive mobile ISP UDP blocking and DPI filters
+    "http://tracker.opentrackr.org:1337/announce",
+    "http://open.tracker.cl:1337/announce",
+    "http://tracker.openbittorrent.com:6969/announce",
+    "https://tracker.tamersunion.org:443/announce",
+    "https://opentracker.i2p.rocks:443/announce",
+    // UDP trackers — faster when UDP is not blocked (WiFi, most VPNs)
     "udp://tracker.opentrackr.org:1337/announce",
     "udp://open.tracker.cl:1337/announce",
     "udp://tracker.openbittorrent.com:6969/announce",

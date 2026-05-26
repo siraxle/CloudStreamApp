@@ -13,6 +13,8 @@ import kotlinx.coroutines.withContext
 import org.libtorrent4j.AlertListener
 import org.libtorrent4j.Priority
 import org.libtorrent4j.SessionManager
+import org.libtorrent4j.SessionParams
+import org.libtorrent4j.SettingsPack
 import org.libtorrent4j.Sha1Hash
 import org.libtorrent4j.TorrentFlags
 import org.libtorrent4j.TorrentHandle
@@ -26,6 +28,7 @@ import org.libtorrent4j.alerts.SaveResumeDataFailedAlert
 import org.libtorrent4j.alerts.TorrentCheckedAlert
 import org.libtorrent4j.alerts.TorrentErrorAlert
 import org.libtorrent4j.swig.libtorrent as LibtorrentSwig
+import org.libtorrent4j.swig.settings_pack as SwigSettingsPack
 import java.io.File
 import java.io.InputStream
 import java.io.RandomAccessFile
@@ -60,7 +63,7 @@ class LibtorrentEngine @Inject constructor(
 ) {
     companion object {
         private const val TAG = "LibtorrentEngine"
-        private const val METADATA_TIMEOUT_SEC = 60
+        private const val METADATA_TIMEOUT_SEC = 120
         private const val PIECE_TIMEOUT_MS = 30_000L
         private const val SEEK_WINDOW = 20
         private const val PIECES_PER_RESUME_SAVE = 50
@@ -118,8 +121,43 @@ class LibtorrentEngine @Inject constructor(
                 }
             }
         })
-        session?.start()
+        session?.start(SessionParams(buildSessionSettings()))
         if (session != null) Log.i(TAG, "libtorrent session started, savePath=$savePath")
+    }
+
+    // ── Session setup ─────────────────────────────────────────────────────────
+
+    /**
+     * Forces RC4 peer-protocol encryption and listens on port 443 in addition to 6881.
+     * This allows connections to survive on mobile networks where:
+     * - UDP is blocked by the ISP (only TCP trackers will work, but peers can still connect)
+     * - BitTorrent DPI filters are active (RC4 encryption makes traffic unrecognisable)
+     * - Port 6881 is blocked (port 443 is almost never blocked even on restrictive networks)
+     */
+    private fun buildSessionSettings(): SettingsPack = SettingsPack().apply {
+        // Force encrypted connections — evades BitTorrent DPI on mobile ISPs
+        setInteger(
+            SwigSettingsPack.int_types.out_enc_policy.swigValue(),
+            SwigSettingsPack.enc_policy.pe_forced.swigValue()
+        )
+        setInteger(
+            SwigSettingsPack.int_types.in_enc_policy.swigValue(),
+            SwigSettingsPack.enc_policy.pe_forced.swigValue()
+        )
+        // RC4 stream cipher — stronger obfuscation than plaintext XOR header
+        setInteger(
+            SwigSettingsPack.int_types.allowed_enc_level.swigValue(),
+            SwigSettingsPack.enc_level.pe_rc4.swigValue()
+        )
+        // Add port 443 as a listen interface — rarely blocked even on restrictive mobile networks
+        setString(
+            SwigSettingsPack.string_types.listen_interfaces.swigValue(),
+            "0.0.0.0:6881,[::]:6881,0.0.0.0:443,[::]:443"
+        )
+        // Request more peers per tracker announce — speeds up discovery when DHT/UDP is blocked
+        setInteger(SwigSettingsPack.int_types.num_want.swigValue(), 400)
+        // More outgoing connection attempts per second (default 30)
+        setInteger(SwigSettingsPack.int_types.connection_speed.swigValue(), 50)
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
