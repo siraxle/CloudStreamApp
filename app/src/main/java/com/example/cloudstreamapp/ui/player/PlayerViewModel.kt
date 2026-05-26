@@ -106,6 +106,10 @@ class PlayerViewModel @Inject constructor(
     // Folder key of last scanned folder — prevents redundant network scans for same-folder tracks
     @Volatile private var lastScannedFolderKey: String? = null
 
+    // True once we have committed a media item to the controller in this session.
+    // Guards updateState() from reading stale artwork/covers from the service's previous session.
+    private var sessionStarted = false
+
     // Populated in playlist mode: mediaId → CloudItem for per-track folder scanning on transition
     private val mediaIdToCloudItem = HashMap<String, CloudItem>()
 
@@ -611,6 +615,7 @@ class PlayerViewModel @Inject constructor(
             pendingMediaItem = mediaItem
             return
         }
+        sessionStarted = true
         c.setMediaItem(mediaItem)
         c.prepare()
         c.play()
@@ -622,6 +627,7 @@ class PlayerViewModel @Inject constructor(
 
     private fun enqueuePlaylist(items: List<MediaItem>, startIndex: Int) {
         val c = controller ?: return
+        sessionStarted = true
         c.setMediaItems(items, startIndex, 0L)
         c.prepare()
         c.play()
@@ -660,12 +666,16 @@ class PlayerViewModel @Inject constructor(
             hasMedia = c.mediaItemCount > 0,
         isBuffering = c.playbackState == Player.STATE_BUFFERING && c.mediaItemCount > 0,
         )
-        _embeddedArtUri.value = c.mediaMetadata.artworkUri?.toString()
-        // If no images loaded yet (e.g. NowPlaying or any fresh ViewModel), recover the folder
-        // path from the MediaItem extras — every item built by this VM carries it.
-        if (_coverImages.value.isEmpty()) {
-            c.currentMediaItem?.mediaMetadata?.extras?.toCloudPath()
-                ?.let { triggerCoverScan(it) }
+        // Only read artwork / trigger cover recovery after THIS session has started.
+        // Before sessionStarted the service may still hold the previous torrent's state.
+        if (sessionStarted) {
+            _embeddedArtUri.value = c.mediaMetadata.artworkUri?.toString()
+            // If no images loaded yet (e.g. NowPlaying or any fresh ViewModel), recover the folder
+            // path from the MediaItem extras — every item built by this VM carries it.
+            if (_coverImages.value.isEmpty()) {
+                c.currentMediaItem?.mediaMetadata?.extras?.toCloudPath()
+                    ?.let { triggerCoverScan(it) }
+            }
         }
     }
 
