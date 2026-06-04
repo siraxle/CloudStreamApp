@@ -1,5 +1,7 @@
 package com.example.cloudstreamapp.ui.playlist
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,10 +17,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadForOffline
 import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.OfflinePin
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VideoFile
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -26,21 +31,26 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.work.WorkInfo
 import com.example.cloudstreamapp.core.utils.isAudioFile
 import com.example.cloudstreamapp.core.utils.isVideoFile
-import com.example.cloudstreamapp.core.worker.PlaylistCacheWorker
 import com.example.cloudstreamapp.domain.model.CacheStatus
+import com.example.cloudstreamapp.domain.model.CloudType
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,12 +61,47 @@ fun PlaylistDetailScreen(
 ) {
     val tracks by viewModel.tracks.collectAsState()
     val name by viewModel.playlistName.collectAsState()
-    val workInfo by viewModel.workInfo.collectAsState()
-    val isDownloading = workInfo?.state == WorkInfo.State.RUNNING || workInfo?.state == WorkInfo.State.ENQUEUED
-    val progressIndex = workInfo?.progress?.getInt(PlaylistCacheWorker.PROGRESS_INDEX, 0) ?: 0
-    val progressTotal = workInfo?.progress?.getInt(PlaylistCacheWorker.PROGRESS_TOTAL, 0) ?: 0
+    val downloadStates by viewModel.itemDownloadStates.collectAsState()
+    val pendingRemoveItemId by viewModel.pendingRemoveItemId.collectAsState()
+
+    val activeDownloads = downloadStates.values.count { it is PlaylistDetailViewModel.ItemDownloadState.InProgress }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    val saveFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri -> uri?.let { viewModel.exportToUri(it) } }
+
+    LaunchedEffect(viewModel) {
+        viewModel.exportFileSuggestion.collect { filename ->
+            saveFileLauncher.launch(filename)
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.downloadError.collect { error ->
+            when (error) {
+                PlaylistDetailViewModel.DownloadError.CacheLimitReached ->
+                    snackbarHostState.showSnackbar(
+                        message = "Кэш заполнен. Очистите место в Настройках или увеличьте лимит.",
+                        duration = SnackbarDuration.Long,
+                    )
+            }
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.exportResult.collect { result ->
+            val message = when (result) {
+                PlaylistDetailViewModel.ExportResult.Success -> "Плейлист экспортирован"
+                PlaylistDetailViewModel.ExportResult.Error -> "Ошибка при экспорте"
+            }
+            snackbarHostState.showSnackbar(message)
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 navigationIcon = {
@@ -66,10 +111,15 @@ fun PlaylistDetailScreen(
                 },
                 title = {
                     Column {
-                        Text(name)
-                        if (isDownloading) {
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (activeDownloads > 0) {
                             Text(
-                                text = if (progressTotal > 0) "Загрузка $progressIndex из $progressTotal" else "Загрузка…",
+                                text = "Загрузка $activeDownloads файлов…",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -77,6 +127,12 @@ fun PlaylistDetailScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { viewModel.requestExport() }) {
+                        Icon(
+                            Icons.Default.Share,
+                            contentDescription = "Экспортировать плейлист",
+                        )
+                    }
                     IconButton(onClick = { viewModel.triggerDownload() }) {
                         Icon(
                             Icons.Default.DownloadForOffline,
@@ -102,8 +158,10 @@ fun PlaylistDetailScreen(
                     itemsIndexed(tracks, key = { _, row -> row.item.id }) { index, row ->
                         val cloudItem = row.cloudItem
                         val displayName = cloudItem?.name ?: "Неизвестный трек"
+                        val itemState = if (cloudItem != null) downloadStates[cloudItem.id] else null
+                        val isInProgress = itemState is PlaylistDetailViewModel.ItemDownloadState.InProgress
+                        val isDone = itemState is PlaylistDetailViewModel.ItemDownloadState.Done
                         val isCached = cloudItem?.cacheStatus == CacheStatus.CACHED
-                        val isInProgress = isDownloading && !isCached
 
                         val icon = when {
                             cloudItem == null -> Icons.AutoMirrored.Filled.InsertDriveFile
@@ -112,7 +170,7 @@ fun PlaylistDetailScreen(
                             else -> Icons.AutoMirrored.Filled.InsertDriveFile
                         }
                         val iconTint = when {
-                            isCached -> MaterialTheme.colorScheme.tertiary
+                            isCached || isDone -> MaterialTheme.colorScheme.tertiary
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
 
@@ -122,22 +180,32 @@ fun PlaylistDetailScreen(
                             },
                             supportingContent = when {
                                 isInProgress -> {
+                                    val pct = (itemState as PlaylistDetailViewModel.ItemDownloadState.InProgress).progress
                                     {
                                         Column {
                                             Text(
-                                                text = "Загрузка…",
+                                                text = if (pct != null) "${(pct * 100).toInt()}%" else "Загрузка…",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.primary,
                                             )
-                                            LinearProgressIndicator(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(top = 4.dp),
-                                            )
+                                            if (pct != null) {
+                                                LinearProgressIndicator(
+                                                    progress = { pct },
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(top = 4.dp),
+                                                )
+                                            } else {
+                                                LinearProgressIndicator(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(top = 4.dp),
+                                                )
+                                            }
                                         }
                                     }
                                 }
-                                isCached -> {
+                                isCached || isDone -> {
                                     {
                                         Text(
                                             text = "На устройстве",
@@ -176,7 +244,7 @@ fun PlaylistDetailScreen(
                             trailingContent = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     when {
-                                        isCached -> Icon(
+                                        isCached || isDone -> Icon(
                                             imageVector = Icons.Default.OfflinePin,
                                             contentDescription = "На устройстве",
                                             modifier = Modifier.size(20.dp),
@@ -188,15 +256,18 @@ fun PlaylistDetailScreen(
                                             modifier = Modifier.size(20.dp),
                                             tint = MaterialTheme.colorScheme.primary,
                                         )
-                                        cloudItem?.cacheStatus == CacheStatus.PARTIAL -> Icon(
-                                            imageVector = Icons.Default.Downloading,
-                                            contentDescription = "Частично загружен",
-                                            modifier = Modifier.size(20.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
+                                        cloudItem != null -> IconButton(
+                                            onClick = { viewModel.downloadSingleTrack(cloudItem) },
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Download,
+                                                contentDescription = "Скачать трек",
+                                                modifier = Modifier.size(20.dp),
+                                            )
+                                        }
                                         else -> Unit
                                     }
-                                    IconButton(onClick = { viewModel.removeTrack(row.item.id) }) {
+                                    IconButton(onClick = { viewModel.requestRemoveTrack(row.item.id) }) {
                                         Icon(Icons.Default.Delete, contentDescription = "Удалить из плейлиста")
                                     }
                                 }
@@ -209,5 +280,28 @@ fun PlaylistDetailScreen(
                 }
             }
         }
+    }
+
+    if (pendingRemoveItemId != null) {
+        val pendingTrack = tracks.firstOrNull { it.item.id == pendingRemoveItemId }
+        val trackName = pendingTrack?.cloudItem?.name ?: "трек"
+        val isLocal = pendingTrack?.cloudItem?.path?.cloudType == CloudType.LOCAL
+        val dialogText = if (isLocal)
+            "«$trackName» будет удалён из плейлиста. Файл на устройстве останется."
+        else
+            "«$trackName» будет удалён из плейлиста. Если этот трек не используется в других плейлистах, он также будет удалён с устройства."
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelRemoveTrack() },
+            title = { Text("Удалить из плейлиста?") },
+            text = { Text(dialogText) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmRemoveTrack() }) {
+                    Text("Удалить", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.cancelRemoveTrack() }) { Text("Отмена") }
+            },
+        )
     }
 }

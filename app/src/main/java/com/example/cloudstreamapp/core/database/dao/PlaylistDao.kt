@@ -17,6 +17,9 @@ interface PlaylistDao {
     @Query("SELECT * FROM playlists WHERE id = :id")
     suspend fun getById(id: String): PlaylistEntity?
 
+    @Query("SELECT * FROM playlists WHERE name = :name LIMIT 1")
+    suspend fun getByName(name: String): PlaylistEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(playlist: PlaylistEntity)
 
@@ -42,7 +45,19 @@ interface PlaylistDao {
     @Query("SELECT * FROM playlist_items WHERE playlistId = :playlistId ORDER BY position ASC")
     suspend fun getItemsOnce(playlistId: String): List<PlaylistItemEntity>
 
+    @Query("SELECT * FROM playlist_items WHERE id = :id LIMIT 1")
+    suspend fun getItemById(id: String): PlaylistItemEntity?
+
     // Count how many OTHER playlists reference this mediaId (used to decide cache eviction)
     @Query("SELECT COUNT(*) FROM playlist_items WHERE mediaId = :mediaId AND playlistId != :excludePlaylistId")
     suspend fun countOtherReferences(mediaId: String, excludePlaylistId: String): Int
+
+    // Count items whose metadata is cloudType TORRENT or LOCAL (joined with media_metadata).
+    // Used to determine whether delete-playlist dialog should show torrent-specific wording.
+    @Query("""
+        SELECT COUNT(*) FROM playlist_items pi
+        INNER JOIN media_metadata mm ON pi.mediaId = mm.id
+        WHERE pi.playlistId = :playlistId AND mm.cloudType IN ('TORRENT', 'LOCAL')
+    """)
+    fun countTorrentOrLocalItems(playlistId: String): Flow<Int>
 }

@@ -3,10 +3,12 @@ package com.example.cloudstreamapp.core.utils
 private val AUDIO_EXTENSIONS = setOf("mp3", "flac", "aac", "ogg", "wav", "m4a", "opus")
 private val VIDEO_EXTENSIONS = setOf("mp4", "mkv", "avi", "mov", "webm", "ts")
 private val MEDIA_EXTENSIONS = AUDIO_EXTENSIONS + VIDEO_EXTENSIONS
+private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif")
 
 fun String.isMediaFile(): Boolean = substringAfterLast('.').lowercase() in MEDIA_EXTENSIONS
 fun String.isAudioFile(): Boolean = substringAfterLast('.').lowercase() in AUDIO_EXTENSIONS
 fun String.isVideoFile(): Boolean = substringAfterLast('.').lowercase() in VIDEO_EXTENSIONS
+fun String.isImageFile(): Boolean = substringAfterLast('.').lowercase() in IMAGE_EXTENSIONS
 
 fun Long.toHumanReadableSize(): String = when {
     this >= 1_073_741_824L -> "%.1f GB".format(this / 1_073_741_824.0)

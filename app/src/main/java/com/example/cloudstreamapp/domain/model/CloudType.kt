@@ -6,5 +6,7 @@ enum class CloudType {
     DROPBOX,
     ONEDRIVE,
     HTTP,
-    WEBDAV
+    WEBDAV,
+    TORRENT,
+    LOCAL,    // offline-downloaded files; sourceId = absolute file path
 }

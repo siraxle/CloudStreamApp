@@ -3,17 +3,12 @@ package com.example.cloudstreamapp.ui.browser
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.ExistingWorkPolicy
-import androidx.work.WorkManager
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
 import com.example.cloudstreamapp.core.utils.isMediaFile
-import com.example.cloudstreamapp.core.worker.PlaylistCacheWorker
-import com.example.cloudstreamapp.core.worker.SingleFileCacheWorker
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.domain.model.CloudItem
 import com.example.cloudstreamapp.domain.model.CloudPath
 import com.example.cloudstreamapp.domain.model.Playlist
-import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import com.example.cloudstreamapp.domain.port.SourceRepositoryPort
 import com.example.cloudstreamapp.domain.usecase.ListFolderUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -41,8 +36,6 @@ class BrowserViewModel @Inject constructor(
     private val listFolder: ListFolderUseCase,
     private val sourceRepo: SourceRepositoryPort,
     private val playlistRepo: PlaylistRepositoryImpl,
-    private val settingsRepo: SettingsRepositoryPort,
-    private val workManager: WorkManager,
     private val cacheManager: MediaCacheManager,
 ) : ViewModel() {
 
@@ -63,8 +56,12 @@ class BrowserViewModel @Inject constructor(
     private val _sortOrder = MutableStateFlow(SortOrder.NAME_ASC)
     val sortOrder: StateFlow<SortOrder> = _sortOrder.asStateFlow()
 
+    private val _currentPage = MutableStateFlow(0)
+    val currentPage: StateFlow<Int> = _currentPage.asStateFlow()
+    private val _savedPages = mutableListOf<Int>()
+
     @OptIn(ExperimentalCoroutinesApi::class)
-    val items: StateFlow<List<CloudItem>> = combine(_pathStack, _sortOrder) { stack, sort ->
+    private val _allItems: StateFlow<List<CloudItem>> = combine(_pathStack, _sortOrder) { stack, sort ->
         Pair(stack, sort)
     }
         .flatMapLatest { (stack, sort) ->
@@ -104,25 +101,49 @@ class BrowserViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val totalPages: StateFlow<Int> = _allItems
+        .map { list -> if (list.isEmpty()) 0 else (list.size + PAGE_SIZE - 1) / PAGE_SIZE }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    val items: StateFlow<List<CloudItem>> = combine(_allItems, _currentPage) { all, page ->
+        all.drop(page * PAGE_SIZE).take(PAGE_SIZE)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun nextPage() {
+        if (_currentPage.value < totalPages.value - 1) _currentPage.value++
+    }
+
+    fun previousPage() {
+        if (_currentPage.value > 0) _currentPage.value--
+    }
+
     fun navigateTo(path: String) {
+        _savedPages.add(_currentPage.value)
+        _currentPage.value = 0
         _pathStack.value = _pathStack.value + path
     }
 
     fun navigateUp(): Boolean {
         val stack = _pathStack.value
         if (stack.size <= 1) return false
+        _currentPage.value = _savedPages.removeLastOrNull() ?: 0
         _pathStack.value = stack.dropLast(1)
         return true
     }
 
     fun navigateToIndex(index: Int) {
         val stack = _pathStack.value
-        if (index < stack.size) {
-            _pathStack.value = stack.take(index + 1)
-        }
+        if (index < 0 || index >= stack.size || index == stack.size - 1) return
+        val restoredPage = _savedPages.getOrElse(index) { 0 }
+        repeat(stack.size - 1 - index) { _savedPages.removeLastOrNull() }
+        _currentPage.value = restoredPage
+        _pathStack.value = stack.take(index + 1)
     }
 
-    fun setSortOrder(order: SortOrder) { _sortOrder.value = order }
+    fun setSortOrder(order: SortOrder) {
+        _sortOrder.value = order
+        _currentPage.value = 0
+    }
     fun dismissError() { _error.value = null }
 
     // Playlists
@@ -132,36 +153,36 @@ class BrowserViewModel @Inject constructor(
     private val _playlistMessage = MutableStateFlow<String?>(null)
     val playlistMessage: StateFlow<String?> = _playlistMessage.asStateFlow()
 
-    fun cacheFile(item: CloudItem) {
-        viewModelScope.launch {
-            playlistRepo.saveMediaMetadata(item)
-            workManager.enqueueUniqueWork(
-                SingleFileCacheWorker.workName(item.id),
-                ExistingWorkPolicy.KEEP,
-                SingleFileCacheWorker.buildRequest(item.id),
-            )
-            _playlistMessage.value = "«${item.name}» добавляется в кэш"
-        }
-    }
-
     fun addToPlaylist(item: CloudItem, playlistId: String) {
         viewModelScope.launch {
-            playlistRepo.saveMediaAndAddToPlaylist(item, playlistId)
-            enqueueCache(playlistId)
-            _playlistMessage.value = "«${item.name}» добавлен в плейлист"
+            val added = playlistRepo.saveMediaAndAddToPlaylist(item, playlistId)
+            _playlistMessage.value = if (added)
+                "«${item.name}» добавлен в плейлист"
+            else
+                "«${item.name}» уже есть в плейлисте"
         }
     }
 
     fun addFolderToPlaylist(folder: CloudItem, playlistId: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val allItems = listFolder(folder.path).first()
-            val mediaFiles = allItems.filter {
-                it.type == CloudItem.ItemType.FILE && it.name.isMediaFile()
+            val mediaFiles = collectMediaFiles(folder.path)
+            val addedCount = mediaFiles.count { playlistRepo.saveMediaAndAddToPlaylist(it, playlistId) }
+            _playlistMessage.value = when {
+                addedCount == 0 -> "Все файлы из «${folder.name}» уже в плейлисте"
+                addedCount < mediaFiles.size -> "Добавлено $addedCount из ${mediaFiles.size} файлов из «${folder.name}»"
+                else -> "Добавлено $addedCount файлов из «${folder.name}»"
             }
-            mediaFiles.forEach { playlistRepo.saveMediaAndAddToPlaylist(it, playlistId) }
-            enqueueCache(playlistId)
-            _playlistMessage.value = "Добавлено ${mediaFiles.size} файлов из «${folder.name}»"
         }
+    }
+
+    private suspend fun collectMediaFiles(path: CloudPath, depth: Int = 0): List<CloudItem> {
+        if (depth > 10) return emptyList()
+        val items = listFolder(path).first()
+        val files = items.filter { it.type == CloudItem.ItemType.FILE && it.name.isMediaFile() }
+        val subFiles = items
+            .filter { it.type == CloudItem.ItemType.DIRECTORY }
+            .flatMap { collectMediaFiles(it.path, depth + 1) }
+        return files + subFiles
     }
 
     fun createPlaylistAndAdd(item: CloudItem, name: String) {
@@ -175,7 +196,6 @@ class BrowserViewModel @Inject constructor(
             )
             playlistRepo.create(playlist)
             playlistRepo.saveMediaAndAddToPlaylist(item, playlist.id)
-            enqueueCache(playlist.id)
             _playlistMessage.value = "Плейлист «$name» создан"
         }
     }
@@ -191,21 +211,13 @@ class BrowserViewModel @Inject constructor(
             )
             playlistRepo.create(playlist)
             addFolderToPlaylist(folder, playlist.id)
-            // enqueueCache вызывается внутри addFolderToPlaylist
         }
-    }
-
-    private suspend fun enqueueCache(playlistId: String) {
-        val wifiOnly = settingsRepo.wifiOnlyPrefetch.first()
-        workManager.enqueueUniqueWork(
-            PlaylistCacheWorker.workName(playlistId),
-            ExistingWorkPolicy.REPLACE,
-            PlaylistCacheWorker.buildRequest(playlistId, wifiOnly),
-        )
     }
 
     fun dismissPlaylistMessage() { _playlistMessage.value = null }
 }
+
+private const val PAGE_SIZE = 10
 
 enum class SortOrder(val label: String) {
     NAME_ASC("По имени А-Я"),

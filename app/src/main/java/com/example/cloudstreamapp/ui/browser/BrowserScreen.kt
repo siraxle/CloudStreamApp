@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.Folder
@@ -32,7 +33,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.ViewList
-import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -98,6 +98,8 @@ fun BrowserScreen(
     val playlists by viewModel.playlists.collectAsState()
     val playlistMessage by viewModel.playlistMessage.collectAsState()
     val sortOrder by viewModel.sortOrder.collectAsState()
+    val currentPage by viewModel.currentPage.collectAsState()
+    val totalPages by viewModel.totalPages.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     var playlistTarget by remember { mutableStateOf<PlaylistTarget?>(null) }
@@ -177,53 +179,67 @@ fun BrowserScreen(
             when {
                 isLoading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 items.isEmpty() -> Text("Папка пуста", modifier = Modifier.align(Alignment.Center))
-                isGridView -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 140.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(8.dp),
-                ) {
-                    items(items, key = { it.id }) { item ->
-                        CloudItemCard(
-                            item = item,
-                            onClick = {
-                                if (item.type == CloudItem.ItemType.DIRECTORY) {
-                                    viewModel.navigateTo(item.path.relativePath)
-                                } else {
-                                    onPlayMedia(item, viewModel.currentPath)
-                                }
-                            },
-                            onAddToPlaylist = {
-                                playlistTarget = if (item.type == CloudItem.ItemType.DIRECTORY) {
-                                    PlaylistTarget.Folder(item)
-                                } else {
-                                    PlaylistTarget.File(item)
-                                }
-                            },
-                            onCacheFile = { viewModel.cacheFile(item) },
-                        )
+                else -> Column(modifier = Modifier.fillMaxSize()) {
+                    if (isGridView) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = 140.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(8.dp),
+                        ) {
+                            items(items, key = { it.id }) { item ->
+                                CloudItemCard(
+                                    item = item,
+                                    onClick = {
+                                        if (item.type == CloudItem.ItemType.DIRECTORY) {
+                                            viewModel.navigateTo(item.path.relativePath)
+                                        } else {
+                                            onPlayMedia(item, viewModel.currentPath)
+                                        }
+                                    },
+                                    onAddToPlaylist = {
+                                        playlistTarget = if (item.type == CloudItem.ItemType.DIRECTORY) {
+                                            PlaylistTarget.Folder(item)
+                                        } else {
+                                            PlaylistTarget.File(item)
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    } else {
+                        LazyColumn(modifier = Modifier.weight(1f)) {
+                            items(items, key = { it.id }) { item ->
+                                CloudItemRow(
+                                    item = item,
+                                    onClick = {
+                                        if (item.type == CloudItem.ItemType.DIRECTORY) {
+                                            viewModel.navigateTo(item.path.relativePath)
+                                        } else {
+                                            onPlayMedia(item, viewModel.currentPath)
+                                        }
+                                    },
+                                    onPlay = { onPlayMedia(item, viewModel.currentPath) },
+                                    onAddToPlaylist = {
+                                        playlistTarget = if (item.type == CloudItem.ItemType.DIRECTORY) {
+                                            PlaylistTarget.Folder(item)
+                                        } else {
+                                            PlaylistTarget.File(item)
+                                        }
+                                    },
+                                )
+                            }
+                        }
                     }
-                }
-                else -> LazyColumn {
-                    items(items, key = { it.id }) { item ->
-                        CloudItemRow(
-                            item = item,
-                            onClick = {
-                                if (item.type == CloudItem.ItemType.DIRECTORY) {
-                                    viewModel.navigateTo(item.path.relativePath)
-                                } else {
-                                    onPlayMedia(item, viewModel.currentPath)
-                                }
-                            },
-                            onPlay = { onPlayMedia(item, viewModel.currentPath) },
-                            onAddToPlaylist = {
-                                playlistTarget = if (item.type == CloudItem.ItemType.DIRECTORY) {
-                                    PlaylistTarget.Folder(item)
-                                } else {
-                                    PlaylistTarget.File(item)
-                                }
-                            },
-                            onCacheFile = { viewModel.cacheFile(item) },
+                    if (totalPages > 1) {
+                        HorizontalDivider()
+                        BrowserPaginationRow(
+                            currentPage = currentPage,
+                            totalPages = totalPages,
+                            onPrevious = { viewModel.previousPage() },
+                            onNext = { viewModel.nextPage() },
                         )
                     }
                 }
@@ -234,6 +250,7 @@ fun BrowserScreen(
     playlistTarget?.let { target ->
         AddToPlaylistDialog(
             targetName = target.displayName,
+            suggestedName = if (target is PlaylistTarget.Folder) target.item.name else null,
             playlists = playlists,
             onDismiss = { playlistTarget = null },
             onSelectPlaylist = { playlistId ->
@@ -259,7 +276,6 @@ private fun CloudItemCard(
     item: CloudItem,
     onClick: () -> Unit,
     onAddToPlaylist: () -> Unit,
-    onCacheFile: () -> Unit,
 ) {
     val isFile = item.type == CloudItem.ItemType.FILE
     val icon = when {
@@ -290,8 +306,8 @@ private fun CloudItemCard(
                     )
                 }
                 Box(modifier = Modifier.align(Alignment.TopEnd)) {
-                    IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Действия", modifier = Modifier.size(16.dp))
+                    IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Действия", modifier = Modifier.size(18.dp))
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         DropdownMenuItem(
@@ -299,13 +315,6 @@ private fun CloudItemCard(
                             leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, contentDescription = null) },
                             onClick = { menuExpanded = false; onAddToPlaylist() },
                         )
-                        if (isFile && item.cacheStatus != CacheStatus.CACHED) {
-                            DropdownMenuItem(
-                                text = { Text("Кэшировать") },
-                                leadingIcon = { Icon(Icons.Default.SaveAlt, contentDescription = null) },
-                                onClick = { menuExpanded = false; onCacheFile() },
-                            )
-                        }
                     }
                 }
             }
@@ -325,7 +334,6 @@ private fun CloudItemRow(
     onClick: () -> Unit,
     onPlay: () -> Unit,
     onAddToPlaylist: () -> Unit,
-    onCacheFile: () -> Unit,
 ) {
     val isFile = item.type == CloudItem.ItemType.FILE
     val icon = when {
@@ -375,13 +383,6 @@ private fun CloudItemRow(
                             leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, contentDescription = null) },
                             onClick = { menuExpanded = false; onAddToPlaylist() },
                         )
-                        if (isFile && item.cacheStatus != CacheStatus.CACHED) {
-                            DropdownMenuItem(
-                                text = { Text("Кэшировать") },
-                                leadingIcon = { Icon(Icons.Default.SaveAlt, contentDescription = null) },
-                                onClick = { menuExpanded = false; onCacheFile() },
-                            )
-                        }
                     }
                 }
             }
@@ -412,15 +413,50 @@ private fun Breadcrumbs(
 }
 
 @Composable
+private fun BrowserPaginationRow(
+    currentPage: Int,
+    totalPages: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+) {
+    Row(
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        IconButton(onClick = onPrevious, enabled = currentPage > 0) {
+            Icon(Icons.Default.ChevronLeft, contentDescription = "Предыдущая страница")
+        }
+        Text(
+            text = "${currentPage + 1} / $totalPages",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        IconButton(onClick = onNext, enabled = currentPage < totalPages - 1) {
+            Icon(Icons.Default.ChevronRight, contentDescription = "Следующая страница")
+        }
+    }
+}
+
+private const val PLAYLIST_PAGE_SIZE = 5
+
+@Composable
 private fun AddToPlaylistDialog(
     targetName: String,
     playlists: List<Playlist>,
     onDismiss: () -> Unit,
     onSelectPlaylist: (String) -> Unit,
     onCreateNew: (String) -> Unit,
+    suggestedName: String? = null,
 ) {
     var showNewField by rememberSaveable { mutableStateOf(false) }
-    var newName by rememberSaveable { mutableStateOf("") }
+    var newName by rememberSaveable { mutableStateOf(suggestedName.orEmpty()) }
+    var currentPage by rememberSaveable { mutableStateOf(0) }
+    val nameExists = playlists.any { it.name == newName.trim() }
+    val totalPages = if (playlists.isEmpty()) 0
+                     else (playlists.size + PLAYLIST_PAGE_SIZE - 1) / PLAYLIST_PAGE_SIZE
+    val pagePlaylists = playlists.drop(currentPage * PLAYLIST_PAGE_SIZE).take(PLAYLIST_PAGE_SIZE)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -434,11 +470,31 @@ private fun AddToPlaylistDialog(
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
                 if (playlists.isNotEmpty()) {
-                    playlists.forEach { playlist ->
+                    pagePlaylists.forEach { playlist ->
                         TextButton(
                             onClick = { onSelectPlaylist(playlist.id) },
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text(playlist.name) }
+                        ) { Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    }
+                    if (totalPages > 1) {
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            IconButton(
+                                onClick = { currentPage-- },
+                                enabled = currentPage > 0,
+                            ) { Icon(Icons.Default.ChevronLeft, contentDescription = "Назад") }
+                            Text(
+                                text = "${currentPage + 1} / $totalPages",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            IconButton(
+                                onClick = { currentPage++ },
+                                enabled = currentPage < totalPages - 1,
+                            ) { Icon(Icons.Default.ChevronRight, contentDescription = "Вперёд") }
+                        }
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                 }
@@ -448,6 +504,10 @@ private fun AddToPlaylistDialog(
                         onValueChange = { newName = it },
                         label = { Text("Название плейлиста") },
                         singleLine = true,
+                        isError = nameExists,
+                        supportingText = if (nameExists) {
+                            { Text("Плейлист с таким именем уже существует") }
+                        } else null,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
@@ -461,7 +521,8 @@ private fun AddToPlaylistDialog(
         confirmButton = {
             if (showNewField) {
                 TextButton(
-                    onClick = { if (newName.isNotBlank()) onCreateNew(newName.trim()) },
+                    enabled = newName.isNotBlank() && !nameExists,
+                    onClick = { onCreateNew(newName.trim()) },
                 ) { Text("Создать") }
             }
         },

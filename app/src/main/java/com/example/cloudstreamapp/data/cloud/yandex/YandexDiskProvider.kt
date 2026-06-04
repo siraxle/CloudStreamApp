@@ -47,7 +47,7 @@ class YandexDiskProvider @Inject constructor(
         }
         val encodedPath = URLEncoder.encode(relPath, "UTF-8")
 
-        val url = "$apiBase?public_key=$publicKey&path=$encodedPath&limit=100"
+        val url = "$apiBase?public_key=$publicKey&path=$encodedPath&limit=100&preview_size=L"
         val request = Request.Builder().url(url).build()
 
         val body = okHttpClient.newCall(request).execute().use { response ->
@@ -88,6 +88,7 @@ class YandexDiskProvider @Inject constructor(
         val path: String,
         val size: Long?,
         val mime_type: String?,
+        val preview: String?,
     ) {
         fun toCloudItem(sourceId: String) = CloudItem(
             id = UUID.nameUUIDFromBytes("$sourceId:$path".toByteArray()).toString(),
@@ -96,6 +97,7 @@ class YandexDiskProvider @Inject constructor(
             type = if (type == "dir") CloudItem.ItemType.DIRECTORY else CloudItem.ItemType.FILE,
             mimeType = mime_type,
             sizeBytes = size,
+            thumbnailUrl = preview,
             cacheStatus = CacheStatus.REMOTE,
         )
     }

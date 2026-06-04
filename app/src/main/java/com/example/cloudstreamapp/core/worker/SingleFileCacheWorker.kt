@@ -70,14 +70,18 @@ class SingleFileCacheWorker @AssistedInject constructor(
 
         return try {
             val url = getStreamUrl(cloudItem) ?: return Result.failure()
-            downloadToCache(mediaId, url)
+            val downloadedBytes = downloadToCache(mediaId, url)
+            if (entity.sizeBytes == null && downloadedBytes > 0) {
+                metadataDao.updateSizeBytes(mediaId, downloadedBytes)
+            }
             Result.success()
         } catch (_: Exception) {
             Result.retry()
         }
     }
 
-    private suspend fun downloadToCache(key: String, url: String) = withContext(Dispatchers.IO) {
+    // Returns Content-Length if available, otherwise bytes actually read.
+    private suspend fun downloadToCache(key: String, url: String): Long = withContext(Dispatchers.IO) {
         val dataSource = CacheDataSource.Factory()
             .setCache(simpleCache)
             .setUpstreamDataSourceFactory(OkHttpDataSource.Factory(okHttpClient))
@@ -89,15 +93,18 @@ class SingleFileCacheWorker @AssistedInject constructor(
             .build()
 
         val buffer = ByteArray(128 * 1024)
-        dataSource.open(dataSpec)
+        val declaredLength = dataSource.open(dataSpec)
+        var bytesRead = 0L
         try {
             while (!isStopped) {
                 val read = dataSource.read(buffer, 0, buffer.size)
                 if (read == C.RESULT_END_OF_INPUT) break
+                if (read > 0) bytesRead += read
             }
         } finally {
             dataSource.close()
         }
+        if (declaredLength > 0) declaredLength else bytesRead
     }
 
     companion object {

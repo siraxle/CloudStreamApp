@@ -5,24 +5,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -39,45 +36,21 @@ private data class NavItem(
 
 private const val PLAYER_NAV_ROUTE = "player_tab"
 
-/** Reconstructs the filled navigation route from a back-stack entry by substituting {arg} tokens. */
-private fun NavBackStackEntry.toFilledRoute(): String {
-    val pattern = destination.route ?: return ""
-    val bundle = arguments ?: return pattern
-    var filled = pattern
-    bundle.keySet().forEach { key ->
-        val value = when (val v = bundle.get(key)) {
-            is Int -> v.toString()
-            is Long -> v.toString()
-            else -> bundle.getString(key) ?: return@forEach
-        }
-        filled = filled.replace("{$key}", value)
-    }
-    return filled
-}
 
 @Composable
 fun MainScreen() {
     val navController = rememberNavController()
-    var lastPlayerRoute by remember { mutableStateOf<String?>(null) }
 
     val navItems = listOf(
-        NavItem(Screen.Home.route, "Главная", Icons.Default.Home),
         NavItem(Screen.Home.route, "Браузер", Icons.Default.Folder),
         NavItem(Screen.Playlists.route, "Плейлисты", Icons.Default.QueueMusic),
+        NavItem(Screen.TorrentBrowser.route, "Торренты", Icons.Default.CloudDownload),
         NavItem(PLAYER_NAV_ROUTE, "Плеер", Icons.Default.PlayArrow),
         NavItem(Screen.Settings.route, "Настройки", Icons.Default.Settings),
     )
 
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentDest = currentEntry?.destination
-
-    // Track the last player route whenever we navigate into any player screen
-    LaunchedEffect(currentEntry) {
-        val route = currentEntry?.destination?.route ?: return@LaunchedEffect
-        if (route.startsWith("player/")) {
-            lastPlayerRoute = currentEntry?.toFilledRoute()
-        }
-    }
 
     val isOnPlayerScreen = currentDest?.route?.startsWith("player/") == true
 
@@ -96,9 +69,10 @@ fun MainScreen() {
                             onClick = {
                                 when {
                                     item.route == PLAYER_NAV_ROUTE -> {
-                                        val route = lastPlayerRoute ?: return@NavigationBarItem
-                                        navController.navigate(route) {
-                                            launchSingleTop = true
+                                        if (!isOnPlayerScreen) {
+                                            navController.navigate(Screen.NowPlaying.route) {
+                                                launchSingleTop = true
+                                            }
                                         }
                                     }
                                     isOnPlayerScreen -> {
@@ -124,7 +98,14 @@ fun MainScreen() {
                                 }
                             },
                             icon = { Icon(item.icon, contentDescription = item.label) },
-                            label = { Text(item.label) },
+                            label = {
+                                Text(
+                                    text = item.label,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            },
                         )
                     }
                 }

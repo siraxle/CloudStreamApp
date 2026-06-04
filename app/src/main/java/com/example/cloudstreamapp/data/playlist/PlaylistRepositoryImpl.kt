@@ -1,6 +1,8 @@
 package com.example.cloudstreamapp.data.playlist
 
+import androidx.room.withTransaction
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
+import com.example.cloudstreamapp.core.database.AppDatabase
 import com.example.cloudstreamapp.core.database.dao.MediaMetadataDao
 import com.example.cloudstreamapp.core.database.dao.PlaylistDao
 import com.example.cloudstreamapp.core.database.entity.MediaMetadataEntity
@@ -14,16 +16,21 @@ import com.example.cloudstreamapp.domain.model.Playlist
 import com.example.cloudstreamapp.domain.model.PlaylistItem
 import com.example.cloudstreamapp.domain.port.PlaylistRepositoryPort
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class PlaylistRepositoryImpl @Inject constructor(
+    private val database: AppDatabase,
     private val playlistDao: PlaylistDao,
     private val metadataDao: MediaMetadataDao,
     private val cacheManager: MediaCacheManager,
@@ -31,6 +38,10 @@ class PlaylistRepositoryImpl @Inject constructor(
 
     // Incremented whenever media_metadata is written so flows re-read fresh sizeBytes
     private val _metadataVersion = MutableStateFlow(0)
+
+    // Emits the id of a playlist the moment it is deleted — PlaybackService observes this to stop
+    private val _deletedPlaylistFlow = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val deletedPlaylistFlow: SharedFlow<String> = _deletedPlaylistFlow.asSharedFlow()
 
     override fun getAll(): Flow<List<Playlist>> =
         playlistDao.getAll().map { list -> list.map { it.toDomain() } }
@@ -41,6 +52,9 @@ class PlaylistRepositoryImpl @Inject constructor(
         return entity.toDomain(items.map { it.toDomain() })
     }
 
+    suspend fun findByName(name: String): Playlist? =
+        playlistDao.getByName(name)?.toDomain()
+
     override suspend fun create(playlist: Playlist) =
         playlistDao.insert(playlist.toEntity())
 
@@ -48,19 +62,34 @@ class PlaylistRepositoryImpl @Inject constructor(
         playlistDao.update(playlist.toEntity())
 
     override suspend fun delete(id: String) {
-        // Snapshot items before cascade deletion removes them
-        val items = playlistDao.getItemsOnce(id)
+        val mediaIdsToClean = mutableListOf<String>()
 
-        // Cascade-delete playlist + all its playlist_items
-        playlistDao.deleteById(id)
-
-        // Clean up cache and metadata for tracks not referenced by any other playlist
-        for (item in items) {
-            val otherRefs = playlistDao.countOtherReferences(item.mediaId, id)
-            if (otherRefs == 0) {
-                cacheManager.removeCachedFile(item.mediaId)
-                metadataDao.deleteById(item.mediaId)
+        // Single transaction: snapshot → cascade delete → check refs → delete orphaned metadata
+        database.withTransaction {
+            val items = playlistDao.getItemsOnce(id)
+            playlistDao.deleteById(id)
+            for (item in items) {
+                val otherRefs = playlistDao.countOtherReferences(item.mediaId, id)
+                if (otherRefs == 0) {
+                    val meta = metadataDao.getById(item.mediaId)
+                    // LOCAL = torrent file on disk; managed by TorrentDownloadManager, not here
+                    if (meta?.cloudType != CloudType.LOCAL.name) {
+                        metadataDao.deleteById(item.mediaId)
+                        mediaIdsToClean.add(item.mediaId)
+                    }
+                }
             }
+        }
+
+        // Signal deletion before touching cache so the player can stop reading before we delete
+        _deletedPlaylistFlow.tryEmit(id)
+
+        // Remove from ExoPlayer cache outside the DB transaction (best-effort)
+        for (mediaId in mediaIdsToClean) {
+            cacheManager.removeCachedFile(mediaId)
+        }
+        if (mediaIdsToClean.isNotEmpty()) {
+            _metadataVersion.update { it + 1 }
         }
     }
 
@@ -70,8 +99,40 @@ class PlaylistRepositoryImpl @Inject constructor(
     override suspend fun removeItem(itemId: String) =
         playlistDao.deleteItem(itemId)
 
+    /**
+     * Removes a single track from its playlist and, if no other playlist references it,
+     * also deletes its cached media file and metadata from the DB.
+     */
+    suspend fun removeItemAndCleanCache(itemId: String) {
+        var mediaIdToClean: String? = null
+
+        database.withTransaction {
+            val item = playlistDao.getItemById(itemId)
+            if (item != null) {
+                playlistDao.deleteItem(itemId)
+                val otherRefs = playlistDao.countOtherReferences(item.mediaId, item.playlistId)
+                if (otherRefs == 0) {
+                    val meta = metadataDao.getById(item.mediaId)
+                    // LOCAL = torrent file on disk; managed by TorrentDownloadManager, not here
+                    if (meta?.cloudType != CloudType.LOCAL.name) {
+                        metadataDao.deleteById(item.mediaId)
+                        mediaIdToClean = item.mediaId
+                    }
+                }
+            } else {
+                playlistDao.deleteItem(itemId)
+            }
+        }
+
+        mediaIdToClean?.let { cacheManager.removeCachedFile(it) }
+        _metadataVersion.update { it + 1 }
+    }
+
     override suspend fun moveItem(itemId: String, newPosition: Int) =
         playlistDao.updateItemPosition(itemId, newPosition)
+
+    suspend fun findMetadataId(sourceId: String, relativePath: String): String? =
+        metadataDao.get(sourceId, relativePath)?.id
 
     suspend fun saveMediaMetadata(cloudItem: CloudItem) {
         val existing = metadataDao.get(cloudItem.path.sourceId, cloudItem.path.relativePath)
@@ -82,20 +143,27 @@ class PlaylistRepositoryImpl @Inject constructor(
 
     suspend fun updateSizeBytes(mediaId: String, sizeBytes: Long) {
         metadataDao.updateSizeBytes(mediaId, sizeBytes)
-        _metadataVersion.value++
+        _metadataVersion.update { it + 1 }
     }
 
     fun notifyDataChanged() {
-        _metadataVersion.value++
+        _metadataVersion.update { it + 1 }
     }
 
-    suspend fun saveMediaAndAddToPlaylist(cloudItem: CloudItem, playlistId: String) {
+    fun onCacheCleared() {
+        _metadataVersion.update { it + 1 }
+    }
+
+    suspend fun saveMediaAndAddToPlaylist(cloudItem: CloudItem, playlistId: String): Boolean {
         val mediaId = cloudItem.id
-        val existing = metadataDao.get(cloudItem.path.sourceId, cloudItem.path.relativePath)
-        if (existing == null) {
+        // Dedup by ID, not by (sourceId, path): multiple files in the same torrent folder
+        // share the same (sourceId, relativePath) pair, so the path-based lookup would
+        // incorrectly skip metadata insertion for all files after the first in that folder.
+        if (metadataDao.getById(mediaId) == null) {
             metadataDao.insert(cloudItem.toMetadataEntity())
         }
         val currentItems = playlistDao.getItemsForPlaylist(playlistId).first()
+        if (currentItems.any { it.mediaId == mediaId }) return false
         val nextPosition = (currentItems.maxOfOrNull { it.position } ?: -1) + 1
         playlistDao.insertItem(
             PlaylistItemEntity(
@@ -106,10 +174,10 @@ class PlaylistRepositoryImpl @Inject constructor(
                 addedAt = System.currentTimeMillis(),
             )
         )
-        // Update playlist updatedAt
         playlistDao.getById(playlistId)?.let { playlist ->
             playlistDao.update(playlist.copy(updatedAt = System.currentTimeMillis()))
         }
+        return true
     }
 
     // Reacts to both playlist_items changes AND media_metadata updates (_metadataVersion)
@@ -122,7 +190,9 @@ class PlaylistRepositoryImpl @Inject constructor(
                 items.map { itemEntity ->
                     val meta = metadataDao.getById(itemEntity.mediaId)
                     val cloudItem = meta?.toCloudItem()?.let { item ->
-                        item.copy(cacheStatus = cacheManager.getCacheStatus(item.id, item.sizeBytes))
+                        val cacheStatus = if (meta.cloudType == CloudType.LOCAL.name) CacheStatus.CACHED
+                                          else cacheManager.getCacheStatus(item.id, item.sizeBytes)
+                        item.copy(cacheStatus = cacheStatus)
                     }
                     itemEntity.toDomain() to cloudItem
                 }
@@ -130,6 +200,13 @@ class PlaylistRepositoryImpl @Inject constructor(
 
     // Returns Triple(total, cached, downloading) for the playlist list screen.
     // Also reacts to _metadataVersion so counts update after downloads complete.
+    fun hasLocalTracks(playlistId: String): Flow<Boolean> =
+        playlistDao.getItemsForPlaylist(playlistId)
+            .map { items -> items.any { it.mediaId.startsWith("local:") } }
+
+    fun hasTorrentOrLocalTracks(playlistId: String): Flow<Boolean> =
+        playlistDao.countTorrentOrLocalItems(playlistId).map { it > 0 }
+
     fun getItemCacheStats(playlistId: String): Flow<Triple<Int, Int, Int>> =
         combine(
             playlistDao.getItemsForPlaylist(playlistId),
@@ -140,10 +217,14 @@ class PlaylistRepositoryImpl @Inject constructor(
                 for (itemEntity in items) {
                     total++
                     val meta = metadataDao.getById(itemEntity.mediaId)
-                    when (cacheManager.getCacheStatus(itemEntity.mediaId, meta?.sizeBytes)) {
-                        CacheStatus.CACHED -> cached++
-                        CacheStatus.PARTIAL -> partial++
-                        else -> {}
+                    if (meta?.cloudType == CloudType.LOCAL.name) {
+                        cached++
+                    } else {
+                        when (cacheManager.getCacheStatus(itemEntity.mediaId, meta?.sizeBytes)) {
+                            CacheStatus.CACHED -> cached++
+                            CacheStatus.PARTIAL -> partial++
+                            else -> {}
+                        }
                     }
                 }
                 Triple(total, cached, partial)

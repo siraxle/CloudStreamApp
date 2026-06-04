@@ -12,13 +12,16 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -32,17 +35,29 @@ fun MiniPlayerBar(
     val state by viewModel.state.collectAsState()
     if (!state.hasMedia) return
 
+    var dragProgress by remember { mutableStateOf<Float?>(null) }
+    val sliderValue = dragProgress ?: run {
+        val dur = state.durationMs
+        if (dur > 0) (state.positionMs.toFloat() / dur).coerceIn(0f, 1f) else 0f
+    }
+
     Surface(
         tonalElevation = 3.dp,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column {
-            LinearProgressIndicator(
-                progress = {
-                    val dur = state.durationMs
-                    if (dur > 0) (state.positionMs.toFloat() / dur).coerceIn(0f, 1f) else 0f
+            Slider(
+                value = sliderValue,
+                onValueChange = { dragProgress = it },
+                onValueChangeFinished = {
+                    dragProgress?.let { p ->
+                        viewModel.seekTo((p * state.durationMs).toLong())
+                    }
+                    dragProgress = null
                 },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
             )
             Row(
                 verticalAlignment = Alignment.CenterVertically,

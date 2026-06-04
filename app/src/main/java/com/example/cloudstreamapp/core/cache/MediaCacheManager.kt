@@ -9,55 +9,108 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 @Singleton
 class MediaCacheManager @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
-    private var maxBytes = DEFAULT_MAX_BYTES
+    private var permMaxBytes = DEFAULT_PERM_MAX_BYTES
     private var released = false
 
-    val simpleCache: SimpleCache by lazy {
+    private val _cacheCleared = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val cacheCleared: SharedFlow<Unit> = _cacheCleared.asSharedFlow()
+
+    private val databaseProvider by lazy { StandaloneDatabaseProvider(context) }
+
+    /** Explicitly downloaded tracks. In filesDir — survives OS cache clearing. */
+    val permanentCache: SimpleCache by lazy {
         SimpleCache(
-            File(context.cacheDir, "media"),
-            LeastRecentlyUsedCacheEvictor(maxBytes),
-            StandaloneDatabaseProvider(context),
+            File(context.filesDir, "media_downloads"),
+            LeastRecentlyUsedCacheEvictor(permMaxBytes),
+            databaseProvider,
         )
     }
 
+    /** Streaming buffer. In cacheDir (OS may clear it); wiped on each app start. */
+    val tempCache: SimpleCache by lazy {
+        SimpleCache(
+            File(context.cacheDir, "media_stream"),
+            LeastRecentlyUsedCacheEvictor(DEFAULT_TEMP_MAX_BYTES),
+            databaseProvider,
+        ).also { clearCacheSpans(it) }
+    }
+
+    private fun clearCacheSpans(cache: SimpleCache) {
+        try {
+            cache.keys.toSet().forEach { key ->
+                cache.getCachedSpans(key).toList().forEach { span ->
+                    try { cache.removeSpan(span) } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    val permUsedBytes: Long
+        get() = if (released) 0L else try { permanentCache.cacheSpace } catch (_: Exception) { 0L }
+
+    val tempUsedBytes: Long
+        get() = if (released) 0L else try { tempCache.cacheSpace } catch (_: Exception) { 0L }
+
+    val usedBytes: Long get() = permUsedBytes
+
     fun setMaxCacheBytes(bytes: Long) {
-        maxBytes = bytes
+        permMaxBytes = bytes
     }
 
     fun getCacheStatus(key: String, sizeBytes: Long?): CacheStatus {
         if (released) return CacheStatus.REMOTE
-        val range = sizeBytes ?: (Long.MAX_VALUE / 2)
-        val cachedBytes = simpleCache.getCachedBytes(key, 0, range)
-        return when {
-            cachedBytes <= 0 -> CacheStatus.REMOTE
-            sizeBytes != null && cachedBytes >= sizeBytes -> CacheStatus.CACHED
-            else -> CacheStatus.PARTIAL
+        return try {
+            val range = sizeBytes ?: (Long.MAX_VALUE / 2)
+            val cachedBytes = permanentCache.getCachedBytes(key, 0, range)
+            when {
+                cachedBytes <= 0 -> CacheStatus.REMOTE
+                sizeBytes != null && cachedBytes >= sizeBytes -> CacheStatus.CACHED
+                else -> CacheStatus.PARTIAL
+            }
+        } catch (_: Exception) {
+            CacheStatus.REMOTE
         }
     }
 
     fun removeCachedFile(key: String) {
         if (released) return
         try {
-            // toList() prevents ConcurrentModificationException while removing spans
-            simpleCache.getCachedSpans(key).toList().forEach { span ->
-                try { simpleCache.removeSpan(span) } catch (_: Exception) {}
+            permanentCache.getCachedSpans(key).toList().forEach { span ->
+                try { permanentCache.removeSpan(span) } catch (_: Exception) {}
             }
         } catch (_: Exception) {}
     }
 
+    fun clearAll() {
+        if (released) return
+        clearCacheSpans(permanentCache)
+        _cacheCleared.tryEmit(Unit)
+    }
+
+    fun clearTemp() {
+        if (released) return
+        clearCacheSpans(tempCache)
+    }
+
     fun release() {
         if (!released) {
-            simpleCache.release()
             released = true
+            try { permanentCache.release() } catch (_: Exception) {}
+            try { tempCache.release() } catch (_: Exception) {}
         }
     }
 
     companion object {
-        const val DEFAULT_MAX_BYTES = 2L * 1024 * 1024 * 1024 // 2 GB
+        const val DEFAULT_PERM_MAX_BYTES = 2L * 1024 * 1024 * 1024 // 2 GB
+        const val DEFAULT_TEMP_MAX_BYTES = 300L * 1024 * 1024       // 300 MB
+        const val DEFAULT_MAX_BYTES = DEFAULT_PERM_MAX_BYTES
     }
 }

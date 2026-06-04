@@ -34,9 +34,22 @@ sealed class Screen(val route: String) {
             mediaId: String,
         ): String = "player/folder/$cloudType/${Uri.encode(sourceUrl)}/${Uri.encode(folderPath)}/${Uri.encode(mediaId)}"
     }
+    object NowPlaying : Screen("player/now_playing")
     object Playlists : Screen("playlists")
     object PlaylistDetail : Screen("playlist/{playlistId}") {
         fun createRoute(playlistId: String) = "playlist/$playlistId"
     }
+    object FavoritePlaylists : Screen("favorites")
     object Settings : Screen("settings")
+    object ImageGallery : Screen("gallery/{cloudType}/{encodedSourceUrl}/{encodedFolderPath}") {
+        fun createRoute(cloudType: String, sourceUrl: String, folderPath: String): String =
+            "gallery/$cloudType/${Uri.encode(sourceUrl)}/${Uri.encode(folderPath)}"
+    }
+    object TorrentBrowser : Screen("torrent")
+    object TorrentDownloads : Screen("torrent/downloads")
+    object TorrentGroupDetail : Screen("torrent/downloads/{encodedTorrentName}") {
+        fun createRoute(torrentName: String) = "torrent/downloads/${Uri.encode(torrentName)}"
+    }
+    object LocalTorrents : Screen("torrent/local")
+    object SavedTorrents : Screen("torrent/saved")
 }
