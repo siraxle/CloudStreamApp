@@ -1,6 +1,7 @@
 package com.example.cloudstreamapp.data.equalizer
 
 import android.media.audiofx.Equalizer
+import android.media.audiofx.LoudnessEnhancer
 import androidx.annotation.MainThread
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -28,6 +29,7 @@ class EqualizerController @Inject constructor(
     private val dataStore: DataStore<Preferences>,
 ) {
     private var equalizer: Equalizer? = null
+    private var loudnessEnhancer: LoudnessEnhancer? = null
 
     private val _bandCount = MutableStateFlow(DEFAULT_BAND_COUNT)
     val bandCount: StateFlow<Int> = _bandCount.asStateFlow()
@@ -40,6 +42,8 @@ class EqualizerController @Inject constructor(
     val bandLevelRange: StateFlow<Pair<Int, Int>> = _bandLevelRange.asStateFlow()
 
     val isEnabled: Flow<Boolean> = dataStore.data.map { it[Keys.ENABLED] ?: true }
+
+    val loudnessGain: Flow<Int> = dataStore.data.map { it[Keys.LOUDNESS_GAIN] ?: 0 }
 
     val preset: Flow<EqualizerPreset> = dataStore.data.map { prefs ->
         val name = prefs[Keys.PRESET]
@@ -57,7 +61,9 @@ class EqualizerController @Inject constructor(
     fun attach(audioSessionId: Int, scope: CoroutineScope) {
         if (audioSessionId == C.AUDIO_SESSION_ID_UNSET) return
         equalizer?.release()
+        loudnessEnhancer?.release()
         equalizer = runCatching { Equalizer(0, audioSessionId) }.getOrNull() ?: return
+        loudnessEnhancer = runCatching { LoudnessEnhancer(audioSessionId) }.getOrNull()
 
         val eq = equalizer!!
         runCatching {
@@ -79,6 +85,13 @@ class EqualizerController @Inject constructor(
                     runCatching { eq.setBandLevel(band.toShort(), gain) }
                 }
             }
+            val savedGain = prefs[Keys.LOUDNESS_GAIN] ?: 0
+            withContext(Dispatchers.Main) {
+                runCatching {
+                    loudnessEnhancer?.setTargetGain(savedGain)
+                    loudnessEnhancer?.enabled = savedGain > 0
+                }
+            }
         }
     }
 
@@ -86,11 +99,23 @@ class EqualizerController @Inject constructor(
     fun release() {
         equalizer?.release()
         equalizer = null
+        loudnessEnhancer?.release()
+        loudnessEnhancer = null
     }
 
     suspend fun setEnabled(enabled: Boolean) {
         dataStore.edit { it[Keys.ENABLED] = enabled }
         withContext(Dispatchers.Main) { runCatching { equalizer?.enabled = enabled } }
+    }
+
+    suspend fun setLoudnessGain(gainMb: Int) {
+        dataStore.edit { it[Keys.LOUDNESS_GAIN] = gainMb }
+        withContext(Dispatchers.Main) {
+            runCatching {
+                loudnessEnhancer?.setTargetGain(gainMb)
+                loudnessEnhancer?.enabled = gainMb > 0
+            }
+        }
     }
 
     suspend fun setBandGain(band: Int, gainMb: Short) {
@@ -121,6 +146,7 @@ class EqualizerController @Inject constructor(
     private object Keys {
         val ENABLED = booleanPreferencesKey("eq_enabled")
         val PRESET = stringPreferencesKey("eq_preset")
+        val LOUDNESS_GAIN = intPreferencesKey("loudness_gain")
         fun bandKey(band: Int) = intPreferencesKey("eq_band_$band")
     }
 

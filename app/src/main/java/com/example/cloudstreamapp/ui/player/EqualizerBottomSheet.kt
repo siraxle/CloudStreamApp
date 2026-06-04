@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
@@ -41,6 +42,7 @@ fun EqualizerBottomSheet(
     val bandGains by viewModel.bandGains.collectAsState()
     val bandFrequencies by viewModel.bandFrequencies.collectAsState()
     val (minLevel, maxLevel) = viewModel.bandLevelRange.collectAsState().value
+    val loudnessGain by viewModel.loudnessGain.collectAsState()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -138,6 +140,50 @@ fun EqualizerBottomSheet(
                         textAlign = TextAlign.Start,
                     )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider()
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Loudness booster
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Усиление громкости", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = formatGain(loudnessGain / 100f),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "0 дБ",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.width(52.dp),
+                    textAlign = TextAlign.End,
+                )
+                Slider(
+                    value = loudnessGain.toFloat(),
+                    onValueChange = { viewModel.setLoudnessGain(it.roundToInt()) },
+                    valueRange = 0f..1000f,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 12.dp),
+                )
+                Text(
+                    text = "+10 дБ",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.width(44.dp),
+                    textAlign = TextAlign.Start,
+                )
             }
         }
     }

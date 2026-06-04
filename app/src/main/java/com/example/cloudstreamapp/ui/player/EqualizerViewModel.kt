@@ -28,8 +28,15 @@ class EqualizerViewModel @Inject constructor(
     val bandFrequencies: StateFlow<List<Int>> = controller.bandFrequencies
     val bandLevelRange: StateFlow<Pair<Int, Int>> = controller.bandLevelRange
 
+    val loudnessGain: StateFlow<Int> = controller.loudnessGain
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
     fun setEnabled(enabled: Boolean) = viewModelScope.launch {
         controller.setEnabled(enabled)
+    }
+
+    fun setLoudnessGain(gainMb: Int) = viewModelScope.launch {
+        controller.setLoudnessGain(gainMb)
     }
 
     fun setBandGain(band: Int, gainMb: Short) = viewModelScope.launch {
