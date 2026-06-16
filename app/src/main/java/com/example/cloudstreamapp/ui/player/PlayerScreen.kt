@@ -300,6 +300,7 @@ private fun AudioPlayerContent(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth(),
             )
+
         }
     }
 }

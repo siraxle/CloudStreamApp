@@ -1,5 +1,6 @@
 package com.example.cloudstreamapp.ui.player
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.example.cloudstreamapp.core.utils.toFormattedDuration
 
 @Composable
 fun MiniPlayerBar(
@@ -59,6 +61,27 @@ fun MiniPlayerBar(
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp),
             )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                val displayPosition = if (dragProgress != null)
+                    (dragProgress!! * state.durationMs).toLong()
+                else
+                    state.positionMs
+                Text(
+                    text = displayPosition.toFormattedDuration(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = if (state.durationMs > 0) state.durationMs.toFormattedDuration() else "--:--",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
