@@ -1,6 +1,7 @@
 package com.example.cloudstreamapp.data.torrent
 
 import com.example.cloudstreamapp.core.utils.isAudioFile
+import com.example.cloudstreamapp.core.utils.isCueFile
 import com.example.cloudstreamapp.data.cloud.CloudProvider
 import com.example.cloudstreamapp.data.torrent.engine.LibtorrentEngine
 import com.example.cloudstreamapp.data.torrent.engine.TorrentHttpServer
@@ -122,7 +123,7 @@ class TorrentCloudProvider @Inject constructor(
         magnetUri: String,
     ): List<CloudItem> {
         val prefix = if (folderPath.isEmpty()) "" else "$folderPath/"
-        val audioFiles = files.filter { it.name.isAudioFile() }
+        val audioFiles = files.filter { it.name.isAudioFile() || it.name.isCueFile() }
 
         val seenDirs = linkedSetOf<String>()
         val dirs = mutableListOf<CloudItem>()
@@ -184,6 +185,8 @@ class TorrentCloudProvider @Inject constructor(
         "opus" -> "audio/ogg; codecs=opus"
         "m4a"  -> "audio/mp4"
         "wav"  -> "audio/wav"
+        "ape"  -> "audio/x-ape"
+        "cue"  -> "text/plain"
         else   -> "audio/mpeg"
     }
 }

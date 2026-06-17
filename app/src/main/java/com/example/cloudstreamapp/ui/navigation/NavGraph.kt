@@ -7,6 +7,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
+import com.example.cloudstreamapp.core.utils.isCueFile
 import com.example.cloudstreamapp.ui.browser.BrowserScreen
 import com.example.cloudstreamapp.ui.gallery.ImageGalleryScreen
 import com.example.cloudstreamapp.ui.home.HomeScreen
@@ -54,14 +55,25 @@ fun NavGraph(
                     navController.navigate(Screen.Browser.createRoute(sourceId, path))
                 },
                 onPlayMedia = { item, folderPath ->
-                    navController.navigate(
-                        Screen.FolderPlayer.createRoute(
-                            cloudType = item.path.cloudType.name,
-                            sourceUrl = item.path.sourceId,
-                            folderPath = folderPath,
-                            mediaId = item.id,
-                        )
-                    ) { launchSingleTop = true }
+                    if (item.name.isCueFile()) {
+                        navController.navigate(
+                            Screen.CuePlayer.createRoute(
+                                cloudType = item.path.cloudType.name,
+                                sourceUrl = item.path.sourceId,
+                                folderPath = folderPath,
+                                cueItemId = item.id,
+                            )
+                        ) { launchSingleTop = true }
+                    } else {
+                        navController.navigate(
+                            Screen.FolderPlayer.createRoute(
+                                cloudType = item.path.cloudType.name,
+                                sourceUrl = item.path.sourceId,
+                                folderPath = folderPath,
+                                mediaId = item.id,
+                            )
+                        ) { launchSingleTop = true }
+                    }
                 },
                 onBack = { navController.popBackStack() },
             )
@@ -92,6 +104,23 @@ fun NavGraph(
                 navArgument("encodedSourceUrl") { type = NavType.StringType },
                 navArgument("encodedFolderPath") { type = NavType.StringType },
                 navArgument("encodedMediaId") { type = NavType.StringType },
+            ),
+        ) {
+            PlayerScreen(
+                onBack = { navController.popBackStack() },
+                onOpenGallery = { cloudType, sourceUrl, folderPath ->
+                    navController.navigate(Screen.ImageGallery.createRoute(cloudType, sourceUrl, folderPath))
+                },
+            )
+        }
+
+        composable(
+            route = Screen.CuePlayer.route,
+            arguments = listOf(
+                navArgument("cloudType") { type = NavType.StringType },
+                navArgument("encodedSourceUrl") { type = NavType.StringType },
+                navArgument("encodedFolderPath") { type = NavType.StringType },
+                navArgument("encodedCueItemId") { type = NavType.StringType },
             ),
         ) {
             PlayerScreen(

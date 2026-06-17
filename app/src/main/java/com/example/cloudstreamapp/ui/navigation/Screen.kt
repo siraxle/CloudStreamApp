@@ -34,6 +34,16 @@ sealed class Screen(val route: String) {
             mediaId: String,
         ): String = "player/folder/$cloudType/${Uri.encode(sourceUrl)}/${Uri.encode(folderPath)}/${Uri.encode(mediaId)}"
     }
+    object CuePlayer : Screen(
+        "player/cue/{cloudType}/{encodedSourceUrl}/{encodedFolderPath}/{encodedCueItemId}"
+    ) {
+        fun createRoute(
+            cloudType: String,
+            sourceUrl: String,
+            folderPath: String,
+            cueItemId: String,
+        ): String = "player/cue/$cloudType/${Uri.encode(sourceUrl)}/${Uri.encode(folderPath)}/${Uri.encode(cueItemId)}"
+    }
     object NowPlaying : Screen("player/now_playing")
     object Playlists : Screen("playlists")
     object PlaylistDetail : Screen("playlist/{playlistId}") {

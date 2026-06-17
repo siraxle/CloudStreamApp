@@ -14,6 +14,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import android.net.Uri
 import com.example.cloudstreamapp.core.cache.MediaCacheManager
+import com.example.cloudstreamapp.core.utils.CueSheetFetcher
 import com.example.cloudstreamapp.data.torrent.download.TorrentCacheManager
 import com.example.cloudstreamapp.data.torrent.engine.LibtorrentEngine
 import com.example.cloudstreamapp.core.utils.isImageFile
@@ -59,6 +60,7 @@ class PlayerViewModel @Inject constructor(
     private val listFolder: ListFolderUseCase,
     private val playlistRepo: PlaylistRepositoryImpl,
     private val cacheManager: MediaCacheManager,
+    private val cueSheetFetcher: CueSheetFetcher,
     private val settings: SettingsRepositoryPort,
     private val torrentEngine: LibtorrentEngine,
     private val torrentCacheManager: TorrentCacheManager,
@@ -118,6 +120,7 @@ class PlayerViewModel @Inject constructor(
         startProgressUpdater()
         when {
             savedStateHandle.get<String>("playlistId") != null -> fetchAndPlayPlaylist()
+            savedStateHandle.get<String>("encodedCueItemId") != null -> fetchAndPlayCue()
             savedStateHandle.get<String>("encodedFolderPath") != null -> fetchAndPlayFolder()
             savedStateHandle.get<String>("cloudType") != null -> fetchAndPlay()
             else -> sessionStarted = true  // NowPlaying: attach to running session, no new media
@@ -439,6 +442,137 @@ class PlayerViewModel @Inject constructor(
                 withContext(Dispatchers.Main) {
                     _isLoadingPlaylist.value = false
                     _error.value = e.message ?: "Не удалось загрузить треки папки"
+                }
+            }
+        }
+    }
+
+    // ── CUE sheet mode ────────────────────────────────────────────────────────
+    // Fetches the .cue file, finds the referenced audio file in the same folder,
+    // and builds a playlist of ClippingConfiguration MediaItems — one per track.
+
+    private fun fetchAndPlayCue() {
+        PlaybackService.currentPlaylistId = null
+        val cloudTypeStr = savedStateHandle.get<String>("cloudType") ?: return
+        val sourceUrl = savedStateHandle.get<String>("encodedSourceUrl") ?: return
+        val folderPath = savedStateHandle.get<String>("encodedFolderPath") ?: return
+        val cueItemId = savedStateHandle.get<String>("encodedCueItemId") ?: return
+
+        _isLoadingPlaylist.value = true
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val cloudType = CloudType.valueOf(cloudTypeStr)
+                val folderCloudPath = CloudPath(sourceId = sourceUrl, relativePath = folderPath, cloudType = cloudType)
+
+                val allItems = listFolder(folderCloudPath).first()
+
+                val imageFiles = allItems.filter { it.type == CloudItem.ItemType.FILE && it.name.isImageFile() }
+                withContext(Dispatchers.Main) {
+                    _folderInfo.value = FolderInfo(cloudTypeStr, sourceUrl, folderPath, imageFiles.isNotEmpty())
+                }
+                launch {
+                    val images = collectCoverImages(allItems)
+                    withContext(Dispatchers.Main) {
+                        _coverImages.value = images
+                        if (images.isNotEmpty()) _folderInfo.value = _folderInfo.value?.copy(hasImages = true)
+                    }
+                }
+
+                val cueItem = allItems.find { it.id == cueItemId }
+                if (cueItem == null) {
+                    withContext(Dispatchers.Main) {
+                        _isLoadingPlaylist.value = false
+                        _error.value = "CUE-файл не найден в папке"
+                    }
+                    return@launch
+                }
+
+                val cueUrl = runCatching { getStreamUrl(cueItem) }.getOrNull()
+                if (cueUrl == null) {
+                    withContext(Dispatchers.Main) {
+                        _isLoadingPlaylist.value = false
+                        _error.value = "Не удалось получить ссылку на CUE-файл"
+                    }
+                    return@launch
+                }
+
+                val cueSheet = cueSheetFetcher.fetch(cueUrl)
+                if (cueSheet == null) {
+                    withContext(Dispatchers.Main) {
+                        _isLoadingPlaylist.value = false
+                        _error.value = "Не удалось разобрать CUE-файл"
+                    }
+                    return@launch
+                }
+
+                val audioItem = allItems.find {
+                    it.type == CloudItem.ItemType.FILE &&
+                    it.name.equals(cueSheet.audioFileName, ignoreCase = true)
+                }
+                if (audioItem == null) {
+                    withContext(Dispatchers.Main) {
+                        _isLoadingPlaylist.value = false
+                        _error.value = "Аудиофайл из CUE не найден: ${cueSheet.audioFileName}"
+                    }
+                    return@launch
+                }
+
+                val audioUrl = runCatching { getStreamUrl(audioItem) }.getOrNull()
+                if (audioUrl == null) {
+                    withContext(Dispatchers.Main) {
+                        _isLoadingPlaylist.value = false
+                        _error.value = "Не удалось получить ссылку на аудиофайл"
+                    }
+                    return@launch
+                }
+
+                val tracks = cueSheet.tracks
+                val audioPathBundle = audioItem.path.toExtrasBundle()
+                val mediaItems = tracks.mapIndexed { index, track ->
+                    val endMs = if (index < tracks.lastIndex) tracks[index + 1].startMs else null
+                    MediaItem.Builder()
+                        .setUri(audioUrl)
+                        .setMediaId("${audioItem.id}:cue:${track.number}")
+                        .setCustomCacheKey(audioItem.id)
+                        .setClippingConfiguration(
+                            MediaItem.ClippingConfiguration.Builder()
+                                .setStartPositionMs(track.startMs)
+                                .apply { if (endMs != null) setEndPositionMs(endMs) }
+                                .build()
+                        )
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setTitle(track.title ?: "Track ${track.number}")
+                                .setArtist(track.performer ?: cueSheet.performer)
+                                .setAlbumTitle(cueSheet.title)
+                                .setTrackNumber(track.number)
+                                .setExtras(audioPathBundle)
+                                .build()
+                        )
+                        .build()
+                }
+
+                if (mediaItems.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        _isLoadingPlaylist.value = false
+                        _error.value = "CUE-файл не содержит треков"
+                    }
+                    return@launch
+                }
+
+                val firstTitle = tracks.firstOrNull()?.title ?: cueSheet.title ?: cueItem.name
+                withContext(Dispatchers.Main) {
+                    _playerState.value = _playerState.value.copy(title = firstTitle)
+                    _isLoadingPlaylist.value = false
+                    val c = controller
+                    if (c == null) pendingPlaylist = Pair(mediaItems, 0)
+                    else enqueuePlaylist(mediaItems, 0)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _isLoadingPlaylist.value = false
+                    _error.value = e.message ?: "Не удалось загрузить CUE"
                 }
             }
         }

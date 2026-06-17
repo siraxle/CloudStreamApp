@@ -75,6 +75,8 @@ class TorrentHttpServer(private val engine: LibtorrentEngine) : NanoHTTPD("127.0
         "opus"       -> "audio/ogg; codecs=opus"
         "m4a"        -> "audio/mp4"
         "wav"        -> "audio/wav"
+        "ape"        -> "audio/x-ape"
+        "cue"        -> "text/plain"
         "mp4"        -> "video/mp4"
         "mkv"        -> "video/x-matroska"
         "webm"       -> "video/webm"
