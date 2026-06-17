@@ -20,3 +20,11 @@ local.properties
 google-services.json
 .vscode/
 .claude/
+# FFmpeg native libs — large binaries obtained via build script, not committed
+app/src/main/jniLibs/**/libffmpeg.so
+app/src/main/jniLibs/**/libffmpegJNI.so
+/libffmpeg.so
+
+# ExoPlayer / Media3 source checkouts — reference only, not part of the build
+/ExoPlayer-r2.19.1/
+/media-1.1.1/

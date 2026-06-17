@@ -1,0 +1,83 @@
+name: Build libffmpegJNI with APE decoder
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install nasm (needed for FFmpeg assembly)
+        run: sudo apt-get install -y nasm
+
+      - name: Download ExoPlayer r2.19.1 FFmpeg JNI sources
+        run: |
+          wget -q https://github.com/google/ExoPlayer/archive/refs/tags/r2.19.1.tar.gz -O exo.tar.gz
+          tar xf exo.tar.gz ExoPlayer-r2.19.1/extensions/ffmpeg/src/main/jni
+          mv ExoPlayer-r2.19.1/extensions/ffmpeg/src/main/jni ./jni
+
+      - name: Clone FFmpeg 4.2
+        run: |
+          git clone --depth=1 --branch release/4.2 https://github.com/FFmpeg/FFmpeg ./jni/ffmpeg
+
+      - name: Build FFmpeg static libs for arm64-v8a
+        run: |
+          NDK="$ANDROID_NDK_LATEST_HOME"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd ape"
+          DECODER_FLAGS=""
+          for d in $DECODERS; do DECODER_FLAGS="$DECODER_FLAGS --enable-decoder=$d"; done
+
+          cd jni/ffmpeg
+          ./configure \
+            --target-os=android \
+            --enable-static \
+            --disable-shared \
+            --disable-doc \
+            --disable-programs \
+            --disable-everything \
+            --disable-avdevice \
+            --disable-avformat \
+            --disable-swscale \
+            --disable-postproc \
+            --disable-avfilter \
+            --disable-symver \
+            --disable-avresample \
+            --enable-swresample \
+            --extra-ldexeflags=-pie \
+            --libdir=android-libs/arm64-v8a \
+            --arch=aarch64 \
+            --cpu=armv8-a \
+            --cross-prefix="$TOOLCHAIN/aarch64-linux-android21-" \
+            --nm="$TOOLCHAIN/llvm-nm" \
+            --ar="$TOOLCHAIN/llvm-ar" \
+            --ranlib="$TOOLCHAIN/llvm-ranlib" \
+            --strip="$TOOLCHAIN/llvm-strip" \
+            $DECODER_FLAGS
+
+          make -j$(nproc)
+          make install-libs
+
+      - name: Build libffmpegJNI.so with CMake
+        run: |
+          NDK="$ANDROID_NDK_LATEST_HOME"
+          cmake -B build-arm64 \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-21 \
+            -DCMAKE_BUILD_TYPE=Release \
+            ./jni
+          cmake --build build-arm64 --target ffmpegJNI -j$(nproc)
+
+      - name: Verify APE decoder is present
+        run: |
+          nm -D build-arm64/libffmpegJNI.so | grep -i ape || echo "WARNING: no APE symbols found"
+
+      - name: Upload libffmpegJNI.so (arm64-v8a)
+        uses: actions/upload-artifact@v4
+        with:
+          name: libffmpegJNI-arm64-v8a-ape
+          path: build-arm64/libffmpegJNI.so
+          if-no-files-found: error
