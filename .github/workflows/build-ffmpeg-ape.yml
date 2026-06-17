@@ -25,11 +25,17 @@ jobs:
       - name: Install build tools
         run: sudo apt-get install -y nasm
 
-      - name: Download ExoPlayer r2.19.1 FFmpeg JNI sources
+      # Use Media3 JNI sources — correct androidx.media3 JNI function names
+      # (ExoPlayer r2.x uses com.google.android.exoplayer2 names which crash on Media3 1.7+)
+      - name: Clone Media3 1.1.1 decoder_ffmpeg JNI
         run: |
-          wget -q https://github.com/google/ExoPlayer/archive/refs/tags/r2.19.1.tar.gz -O exo.tar.gz
-          tar xf exo.tar.gz ExoPlayer-r2.19.1/extensions/ffmpeg/src/main/jni
-          mv ExoPlayer-r2.19.1/extensions/ffmpeg/src/main/jni ./jni
+          git clone --depth=1 --branch 1.1.1 \
+            https://github.com/androidx/media.git \
+            --filter=blob:none --sparse media3-src
+          cd media3-src
+          git sparse-checkout set libraries/decoder_ffmpeg/src/main/jni
+          cd ..
+          mv media3-src/libraries/decoder_ffmpeg/src/main/jni ./jni
 
       - name: Clone FFmpeg 4.2
         run: |
@@ -86,10 +92,10 @@ jobs:
             ./jni
           cmake --build build-${{ matrix.abi }} --target ffmpegJNI -j$(nproc)
 
-      - name: Verify APE decoder is present
+      - name: Verify APE decoder symbols
         run: |
-          nm -D build-${{ matrix.abi }}/libffmpegJNI.so | grep -i "ape\|monkey" \
-            || echo "WARNING: no APE symbols found — check FFmpeg config"
+          nm -D build-${{ matrix.abi }}/libffmpegJNI.so | grep -i "ape\|ffmpegHasDecoder" \
+            || echo "WARNING: check FFmpeg config"
 
       - name: Upload libffmpegJNI.so (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
