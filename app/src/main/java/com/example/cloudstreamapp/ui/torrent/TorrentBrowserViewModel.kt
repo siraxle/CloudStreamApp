@@ -8,6 +8,7 @@ import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.data.torrent.TorrentCloudProvider
 import com.example.cloudstreamapp.data.torrent.TorrentRepository
 import com.example.cloudstreamapp.data.torrent.download.TorrentCacheManager
+import com.example.cloudstreamapp.data.torrent.engine.LibtorrentEngine
 import com.example.cloudstreamapp.data.torrent.download.TorrentDownloadManager
 import com.example.cloudstreamapp.data.torrent.local.LocalTorrentRepository
 import com.example.cloudstreamapp.data.torrent.saved.SavedTorrentRepository
@@ -48,6 +49,7 @@ class TorrentBrowserViewModel @Inject constructor(
     private val savedTorrentRepo: SavedTorrentRepository,
     private val playlistRepo: PlaylistRepositoryImpl,
     private val cacheManager: TorrentCacheManager,
+    private val engine: LibtorrentEngine,
 ) : ViewModel() {
 
     companion object {
@@ -263,6 +265,14 @@ class TorrentBrowserViewModel @Inject constructor(
         page: Int,
     ) {
         viewModelScope.launch {
+            // Ensure the libtorrent engine has this torrent loaded (handles process-death
+            // restart where the ViewModel is recreated via SavedStateHandle before the user
+            // has manually re-opened the torrent). Then restore cache status from DB so that
+            // items render with the correct Cached status on the very first frame.
+            withContext(Dispatchers.IO) {
+                engine.awaitRestored(infoHash)
+                cacheManager.restoreCacheState(infoHash)
+            }
             val items = withContext(Dispatchers.Default) {
                 provider.listFolderItems(infoHash, folderPath, magnetUri)
             }
@@ -286,10 +296,7 @@ class TorrentBrowserViewModel @Inject constructor(
             savedStateHandle[KEY_TORRENT_NAME] = torrentName
             savedStateHandle[KEY_FOLDER_PATH]  = folderPath
             savedStateHandle[KEY_PAGE]         = page
-            // Restore completed-cache status from DB, then resume any downloads that were
-            // interrupted when the app was killed (files on disk but not yet fully cached).
             withContext(Dispatchers.IO) {
-                cacheManager.restoreCacheState(infoHash)
                 cacheManager.resumePendingCaching(infoHash)
             }
         }

@@ -4,12 +4,17 @@ import android.content.Context
 import android.util.Log
 import com.example.cloudstreamapp.domain.torrent.TorrentFile
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.libtorrent4j.AlertListener
 import org.libtorrent4j.Priority
 import org.libtorrent4j.SessionManager
@@ -88,6 +93,17 @@ class LibtorrentEngine @Inject constructor(
     /** False when the native library failed to load. TorrentCloudProvider checks this. */
     val isAvailable: Boolean get() = session != null
 
+    /**
+     * Suspends until the startup auto-restore of all saved torrents is complete.
+     * Returns immediately if [infoHash] is already in the active session.
+     * Call this at the start of any operation that requires [listFiles] / [getFilePath]
+     * to work after a process-death restart before the user has manually re-opened the torrent.
+     */
+    suspend fun awaitRestored(infoHash: String) {
+        if (states.containsKey(infoHash)) return
+        withTimeoutOrNull(10_000L) { _restorationComplete.await() }
+    }
+
     // Keyed by lowercase hex info hash
     private val states = ConcurrentHashMap<String, ActiveTorrent>()
 
@@ -97,6 +113,9 @@ class LibtorrentEngine @Inject constructor(
     // Emits infoHash whenever libtorrent finishes hash-checking a torrent.
     private val _torrentChecked = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val torrentCheckedFlow: SharedFlow<String> = _torrentChecked.asSharedFlow()
+
+    private val restoreScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val _restorationComplete = CompletableDeferred<Unit>()
 
     init {
         session?.addListener(object : AlertListener {
@@ -122,7 +141,15 @@ class LibtorrentEngine @Inject constructor(
             }
         })
         session?.start(SessionParams(buildSessionSettings()))
-        if (session != null) Log.i(TAG, "libtorrent session started, savePath=$savePath")
+        if (session != null) {
+            Log.i(TAG, "libtorrent session started, savePath=$savePath")
+            restoreScope.launch {
+                try { restoreAllTorrents() }
+                finally { _restorationComplete.complete(Unit) }
+            }
+        } else {
+            _restorationComplete.complete(Unit)
+        }
     }
 
     // ── Session setup ─────────────────────────────────────────────────────────
@@ -565,6 +592,57 @@ class LibtorrentEngine @Inject constructor(
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /**
+     * Re-adds all torrents whose metadata was saved in [metadataDir] in a prior session.
+     * Uses .fastresume data when available so libtorrent skips re-hashing files on disk.
+     * Called once from [init] in a background coroutine so the engine is ready without
+     * any DHT/network calls when the user reopens a previously cached torrent folder.
+     */
+    private fun restoreAllTorrents() {
+        val s = session ?: return
+        val torrentFiles = metadataDir.listFiles { f -> f.extension == "torrent" }
+            ?.takeIf { it.isNotEmpty() } ?: return
+
+        var count = 0
+        for (torrentFile in torrentFiles) {
+            val infoHash = torrentFile.nameWithoutExtension.lowercase()
+            if (states.containsKey(infoHash)) continue
+            try {
+                val ti = TorrentInfo.bdecode(torrentFile.readBytes())
+                val resumeFile = File(metadataDir, "$infoHash.fastresume")
+                val fromFastresume = resumeFile.exists()
+                if (fromFastresume) {
+                    s.download(ti, savePath, resumeFile, null, null, TorrentFlags.SEQUENTIAL_DOWNLOAD)
+                } else {
+                    s.download(ti, savePath)
+                }
+
+                val handle = waitForHandle(ti.infoHash(), timeoutMs = 5_000L)
+                if (handle == null) {
+                    Log.w(TAG, "Auto-restore: handle not found for $infoHash after 5s, skipping")
+                    continue
+                }
+                handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
+
+                val activeTorrent = ActiveTorrent(handle, ti, ConcurrentSkipListSet())
+                states[infoHash] = activeTorrent
+                pieceWaiters[infoHash] = ConcurrentHashMap()
+
+                if (fromFastresume) {
+                    populateDownloadedPieces(infoHash, handle, ti, activeTorrent)
+                } else {
+                    for (i in 0 until ti.numFiles()) handle.filePriority(i, Priority.IGNORE)
+                }
+
+                count++
+                Log.i(TAG, "Auto-restored: $infoHash (fastresume=$fromFastresume)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to auto-restore $infoHash: ${e.message}")
+            }
+        }
+        if (count > 0) Log.i(TAG, "restoreAllTorrents: restored $count torrent(s)")
+    }
 
     private fun computeFileProgress(infoHash: String, fileIndex: Int): Float {
         val state = states[infoHash] ?: return 0f
