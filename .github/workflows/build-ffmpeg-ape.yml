@@ -7,8 +7,22 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        include:
+          - abi: arm64-v8a
+            arch: aarch64
+            cpu: armv8-a
+            cross_prefix: aarch64-linux-android21-
+            extra_flags: ""
+          - abi: x86_64
+            arch: x86_64
+            cpu: x86_64
+            cross_prefix: x86_64-linux-android21-
+            extra_flags: "--disable-asm"
+
     steps:
-      - name: Install nasm (needed for FFmpeg assembly)
+      - name: Install build tools
         run: sudo apt-get install -y nasm
 
       - name: Download ExoPlayer r2.19.1 FFmpeg JNI sources
@@ -21,7 +35,7 @@ jobs:
         run: |
           git clone --depth=1 --branch release/4.2 https://github.com/FFmpeg/FFmpeg ./jni/ffmpeg
 
-      - name: Build FFmpeg static libs for arm64-v8a
+      - name: Build FFmpeg static libs (${{ matrix.abi }})
         run: |
           NDK="$ANDROID_NDK_LATEST_HOME"
           TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
@@ -47,37 +61,39 @@ jobs:
             --disable-avresample \
             --enable-swresample \
             --extra-ldexeflags=-pie \
-            --libdir=android-libs/arm64-v8a \
-            --arch=aarch64 \
-            --cpu=armv8-a \
-            --cross-prefix="$TOOLCHAIN/aarch64-linux-android21-" \
+            --libdir=android-libs/${{ matrix.abi }} \
+            --arch=${{ matrix.arch }} \
+            --cpu=${{ matrix.cpu }} \
+            --cross-prefix="$TOOLCHAIN/${{ matrix.cross_prefix }}" \
             --nm="$TOOLCHAIN/llvm-nm" \
             --ar="$TOOLCHAIN/llvm-ar" \
             --ranlib="$TOOLCHAIN/llvm-ranlib" \
             --strip="$TOOLCHAIN/llvm-strip" \
+            ${{ matrix.extra_flags }} \
             $DECODER_FLAGS
 
           make -j$(nproc)
           make install-libs
 
-      - name: Build libffmpegJNI.so with CMake
+      - name: Build libffmpegJNI.so (${{ matrix.abi }})
         run: |
           NDK="$ANDROID_NDK_LATEST_HOME"
-          cmake -B build-arm64 \
+          cmake -B build-${{ matrix.abi }} \
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_ABI=${{ matrix.abi }} \
             -DANDROID_PLATFORM=android-21 \
             -DCMAKE_BUILD_TYPE=Release \
             ./jni
-          cmake --build build-arm64 --target ffmpegJNI -j$(nproc)
+          cmake --build build-${{ matrix.abi }} --target ffmpegJNI -j$(nproc)
 
       - name: Verify APE decoder is present
         run: |
-          nm -D build-arm64/libffmpegJNI.so | grep -i ape || echo "WARNING: no APE symbols found"
+          nm -D build-${{ matrix.abi }}/libffmpegJNI.so | grep -i "ape\|monkey" \
+            || echo "WARNING: no APE symbols found — check FFmpeg config"
 
-      - name: Upload libffmpegJNI.so (arm64-v8a)
+      - name: Upload libffmpegJNI.so (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
         with:
-          name: libffmpegJNI-arm64-v8a-ape
-          path: build-arm64/libffmpegJNI.so
+          name: libffmpegJNI-${{ matrix.abi }}-ape
+          path: build-${{ matrix.abi }}/libffmpegJNI.so
           if-no-files-found: error
