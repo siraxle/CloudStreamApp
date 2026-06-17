@@ -28,14 +28,21 @@ class HomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow<UiState>(UiState.Idle)
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
-    fun addUrl(url: String) {
+    fun addUrl(url: String, customName: String? = null) {
         viewModelScope.launch {
             _uiState.value = UiState.Loading
-            _uiState.value = when (val result = addSource(url)) {
+            _uiState.value = when (val result = addSource(url, customName)) {
                 is AddSourceUseCase.Result.Success -> UiState.Idle
                 is AddSourceUseCase.Result.AlreadyExists -> UiState.AlreadyExists(result.source)
                 is AddSourceUseCase.Result.Error -> UiState.Error(result.message)
             }
+        }
+    }
+
+    fun renameSource(id: String, newName: String) {
+        viewModelScope.launch {
+            val source = sourceRepo.getById(id) ?: return@launch
+            sourceRepo.update(source.copy(name = newName.trim().ifBlank { null }))
         }
     }
 

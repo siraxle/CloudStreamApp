@@ -119,7 +119,8 @@ class PlayerViewModel @Inject constructor(
         when {
             savedStateHandle.get<String>("playlistId") != null -> fetchAndPlayPlaylist()
             savedStateHandle.get<String>("encodedFolderPath") != null -> fetchAndPlayFolder()
-            else -> fetchAndPlay()
+            savedStateHandle.get<String>("cloudType") != null -> fetchAndPlay()
+            else -> sessionStarted = true  // NowPlaying: attach to running session, no new media
         }
         if (isTorrentStream) {
             // infoHash is embedded in the magnetUri (sourceUrl), not in folderPath.
@@ -641,8 +642,11 @@ class PlayerViewModel @Inject constructor(
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             _embeddedArtUri.value = null
             updateState()
-            // In playlist mode, re-scan images if the new track's folder differs from the current one
-            val itemPath = mediaIdToCloudItem[mediaItem?.mediaId]?.path ?: return
+            // Re-scan covers on track transition: playlist mode uses the pre-built map;
+            // folder/NowPlaying mode falls back to the CloudPath stored in the item's extras.
+            val itemPath = mediaIdToCloudItem[mediaItem?.mediaId]?.path
+                ?: mediaItem?.mediaMetadata?.extras?.toCloudPath()
+                ?: return
             triggerCoverScan(itemPath)
         }
         override fun onPositionDiscontinuity(

@@ -3,21 +3,22 @@ package com.example.cloudstreamapp.ui.home
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -98,6 +99,7 @@ fun HomeScreen(
                         SourceItem(
                             source = source,
                             onClick = { onSourceClick(source.id) },
+                            onRename = { newName -> viewModel.renameSource(source.id, newName) },
                             onDelete = { viewModel.deleteSource(source.id) },
                         )
                     }
@@ -113,9 +115,9 @@ fun HomeScreen(
     if (showAddDialog) {
         AddSourceDialog(
             onDismiss = { showAddDialog = false },
-            onConfirm = { url ->
+            onConfirm = { url, name ->
                 showAddDialog = false
-                viewModel.addUrl(url)
+                viewModel.addUrl(url, name)
             },
         )
     }
@@ -125,8 +127,12 @@ fun HomeScreen(
 private fun SourceItem(
     source: CloudSource,
     onClick: () -> Unit,
+    onRename: (String) -> Unit,
     onDelete: () -> Unit,
 ) {
+    var showMenu by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+
     ListItem(
         headlineContent = { Text(source.name ?: source.url) },
         supportingContent = {
@@ -142,20 +148,53 @@ private fun SourceItem(
             )
         },
         trailingContent = {
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, contentDescription = "Удалить")
+            Box {
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Действия")
+                }
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Переименовать") },
+                        onClick = {
+                            showMenu = false
+                            showRenameDialog = true
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Удалить") },
+                        onClick = {
+                            showMenu = false
+                            onDelete()
+                        },
+                    )
+                }
             }
         },
         modifier = Modifier.clickable(onClick = onClick),
     )
+
+    if (showRenameDialog) {
+        RenameDialog(
+            currentName = source.name ?: "",
+            onDismiss = { showRenameDialog = false },
+            onConfirm = { newName ->
+                showRenameDialog = false
+                onRename(newName)
+            },
+        )
+    }
 }
 
 @Composable
 private fun AddSourceDialog(
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
+    onConfirm: (url: String, name: String?) -> Unit,
 ) {
     var url by rememberSaveable { mutableStateOf("") }
+    var name by rememberSaveable { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -172,12 +211,49 @@ private fun AddSourceDialog(
                         .fillMaxWidth()
                         .padding(top = 8.dp),
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Название (необязательно)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { if (url.isNotBlank()) onConfirm(url.trim()) },
+                onClick = { if (url.isNotBlank()) onConfirm(url.trim(), name.trim().ifBlank { null }) },
             ) { Text("Добавить") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+        },
+    )
+}
+
+@Composable
+private fun RenameDialog(
+    currentName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf(currentName) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Переименовать") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Название") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(name) }) { Text("Сохранить") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Отмена") }
