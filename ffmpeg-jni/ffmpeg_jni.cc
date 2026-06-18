@@ -133,6 +133,22 @@ AUDIO_DECODER_FUNC(jlong, ffmpegInitialize, jstring codecName,
     LOGE("Codec not found.");
     return 0L;
   }
+  // APE fallback: FfmpegAudioDecoder.getExtraData() has no case for audio/x-ape
+  // and returns null.  ApeExtractor stores the 26-byte header in ApeExtraDataStore
+  // before emitting the Format, so we read it here if extraData is null.
+  if (!extraData && codec->id == AV_CODEC_ID_APE) {
+    jclass cls = env->FindClass(
+        "com/example/cloudstreamapp/core/extractor/ApeExtraDataStore");
+    if (cls) {
+      jfieldID fid = env->GetStaticFieldID(cls, "data", "[B");
+      if (fid) {
+        extraData = (jbyteArray)env->GetStaticObjectField(cls, fid);
+        jsize sz = extraData ? env->GetArrayLength(extraData) : 0;
+        LOGE("ffmpegInitialize: APE extraData from store, size=%d", sz);
+      }
+      env->DeleteLocalRef(cls);
+    }
+  }
   return (jlong)createContext(env, codec, extraData, outputFloat, rawSampleRate,
                               rawChannelCount);
 }

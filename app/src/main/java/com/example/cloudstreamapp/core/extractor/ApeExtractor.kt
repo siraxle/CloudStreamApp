@@ -173,6 +173,10 @@ class ApeExtractor : Extractor {
             array()
         }
 
+        // JNI fallback: store extradata globally so ffmpegInitialize can read it if
+        // FfmpegAudioDecoder.getExtraData() returns null for audio/x-ape.
+        ApeExtraDataStore.data = extraData
+
         trackOutput!!.format(
             Format.Builder()
                 .setSampleMimeType(MIME_AUDIO_APE)
