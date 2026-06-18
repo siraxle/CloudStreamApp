@@ -1,3 +1,18 @@
+# Builds libffmpegJNI.so with APE (Monkey's Audio) support for use with
+# org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+1.
+#
+# Key differences vs the original Media3 1.1.1 JNI source:
+#   • ffmpegDecode() now takes an extra SimpleDecoderOutputBuffer parameter
+#     (inserted before outputData) that Jellyfin added for dynamic buffer resizing.
+#     We add the parameter but ignore it — the Java-side bytecode patch
+#     (FfmpegLibraryPatch.kt) pre-sizes the output buffer to 4 MiB for APE so
+#     resizing is never triggered.
+#   • APE decoder enabled in FFmpeg configure flags.
+#   • createContext() sets sample_rate/channels before avcodec_open2 (required for APE).
+#
+# After the workflow completes, download the artifacts and place them at:
+#   app/src/main/jniLibs/arm64-v8a/libffmpegJNI.so
+#   app/src/main/jniLibs/x86_64/libffmpegJNI.so
 name: Build libffmpegJNI with APE decoder
 
 on:
@@ -22,20 +37,17 @@ jobs:
             extra_flags: "--disable-asm"
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install build tools
         run: sudo apt-get install -y nasm
 
-      # Use Media3 JNI sources — correct androidx.media3 JNI function names
-      # (ExoPlayer r2.x uses com.google.android.exoplayer2 names which crash on Media3 1.7+)
-      - name: Clone Media3 1.1.1 decoder_ffmpeg JNI
+      # Use the project's patched JNI source (tracked in ffmpeg-jni/):
+      #   • sample_rate/channels set in createContext() for APE
+      #   • ffmpegDecode() updated to accept the Jellyfin extra outputBufferObj param
+      - name: Copy patched JNI source
         run: |
-          git clone --depth=1 --branch 1.1.1 \
-            https://github.com/androidx/media.git \
-            --filter=blob:none --sparse media3-src
-          cd media3-src
-          git sparse-checkout set libraries/decoder_ffmpeg/src/main/jni
-          cd ..
-          mv media3-src/libraries/decoder_ffmpeg/src/main/jni ./jni
+          cp -r ffmpeg-jni ./jni
 
       - name: Clone FFmpeg 4.2
         run: |
