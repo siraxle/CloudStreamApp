@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -101,14 +103,76 @@ class TorrentDownloadManager @Inject constructor(
             is DownloadProgress.Downloading -> return
             else -> {}
         }
+        startDownloadJob(infoHash, fileIndex, fileName, sizeBytes, torrentName, folderPath)
+    }
 
+    /**
+     * Resumes downloads that were requested in a prior session (recorded in
+     * [TorrentPendingDownloadDao]) but did not finish before the process died.
+     * Call this after the torrent is reopened (mirrors [TorrentCacheManager.resumePendingCaching]),
+     * so an interrupted download continues from the already-downloaded pieces instead of
+     * silently sitting forgotten until the user presses Download again.
+     */
+    suspend fun resumePendingDownloads(infoHash: String) {
+        val pending = db.torrentPendingDownloadDao().getForHash(infoHash)
+        if (pending.isEmpty()) return
+
+        val doneIds = db.torrentDownloadDao().getByInfoHash(infoHash).map { it.id }.toSet()
+
+        pending.forEach { entity ->
+            val key = entity.key
+            if (key in doneIds) {
+                db.torrentPendingDownloadDao().deleteByKey(key)
+                return@forEach
+            }
+            if (jobs.containsKey(key)) return@forEach
+            when (_progress.value[key]) {
+                is DownloadProgress.Done,
+                is DownloadProgress.Queued,
+                is DownloadProgress.Downloading -> return@forEach
+                else -> {}
+            }
+            Log.d(TAG, "Resuming pending download: $key")
+            startDownloadJob(
+                infoHash = entity.infoHash,
+                fileIndex = entity.fileIndex,
+                fileName = entity.fileName,
+                sizeBytes = entity.sizeBytes,
+                torrentName = entity.torrentName,
+                folderPath = entity.folderPath,
+            )
+        }
+    }
+
+    private fun startDownloadJob(
+        infoHash: String,
+        fileIndex: Int,
+        fileName: String,
+        sizeBytes: Long,
+        torrentName: String,
+        folderPath: String,
+    ) {
+        val key = "$infoHash:$fileIndex"
         setProgress(key, DownloadProgress.Queued)
 
         jobs[key] = scope.launch {
+            db.torrentPendingDownloadDao().insert(
+                TorrentPendingDownloadEntity(
+                    key = key,
+                    infoHash = infoHash,
+                    fileIndex = fileIndex,
+                    fileName = fileName,
+                    sizeBytes = sizeBytes,
+                    torrentName = torrentName,
+                    folderPath = folderPath,
+                )
+            )
             try {
                 engine.boostFilePriority(infoHash, fileIndex)
 
-                // Wait until all pieces for this file are downloaded
+                // Wait until all pieces for this file are downloaded. If some pieces were
+                // already fetched in a previous session (fastresume-restored), this reflects
+                // that progress immediately instead of starting the fraction back at 0.
                 engine.fileDownloadProgressFlow(infoHash, fileIndex)
                     .onEach { fraction -> setProgress(key, DownloadProgress.Downloading(fraction)) }
                     .first { it >= 1f }
@@ -145,6 +209,12 @@ class TorrentDownloadManager @Inject constructor(
                 setProgress(key, DownloadProgress.Failed(e.message ?: "Download failed"))
             } finally {
                 jobs.remove(key)
+                // NonCancellable: this runs after the coroutine's own Job is already
+                // cancelled (e.g. cancelDownload()), and a plain suspend call here would
+                // throw immediately instead of actually deleting the row.
+                withContext(NonCancellable) {
+                    db.torrentPendingDownloadDao().deleteByKey(key)
+                }
             }
         }
     }
@@ -225,6 +295,7 @@ class TorrentDownloadManager @Inject constructor(
         jobs.clear()
         _progress.value = emptyMap()
         db.torrentDownloadDao().deleteAll()
+        db.torrentPendingDownloadDao().deleteAll()
         downloadDir.deleteRecursively()
         downloadDir.mkdirs()
         Log.i(TAG, "All downloads deleted")

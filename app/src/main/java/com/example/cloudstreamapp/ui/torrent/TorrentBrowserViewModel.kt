@@ -298,6 +298,7 @@ class TorrentBrowserViewModel @Inject constructor(
             savedStateHandle[KEY_PAGE]         = page
             withContext(Dispatchers.IO) {
                 cacheManager.resumePendingCaching(infoHash)
+                downloadManager.resumePendingDownloads(infoHash)
             }
         }
     }
