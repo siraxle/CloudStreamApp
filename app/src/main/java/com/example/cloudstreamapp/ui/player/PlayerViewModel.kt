@@ -19,6 +19,7 @@ import com.example.cloudstreamapp.data.torrent.download.TorrentCacheManager
 import com.example.cloudstreamapp.data.torrent.engine.LibtorrentEngine
 import com.example.cloudstreamapp.core.utils.isImageFile
 import com.example.cloudstreamapp.core.utils.isMediaFile
+import com.example.cloudstreamapp.core.utils.mimeTypeFromExtension
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
 import com.example.cloudstreamapp.data.torrent.saved.SavedTorrentRepository
 import com.example.cloudstreamapp.domain.model.CacheStatus
@@ -535,6 +536,7 @@ class PlayerViewModel @Inject constructor(
                         .setUri(audioUrl)
                         .setMediaId("${audioItem.id}:cue:${track.number}")
                         .setCustomCacheKey(audioItem.id)
+                        .apply { audioItem.mimeType?.let { setMimeType(it) } }
                         .setClippingConfiguration(
                             MediaItem.ClippingConfiguration.Builder()
                                 .setStartPositionMs(track.startMs)
@@ -720,6 +722,7 @@ class PlayerViewModel @Inject constructor(
             .setUri(url)
             .setMediaId(item.id)
             .setCustomCacheKey(item.id)
+            .apply { (item.mimeType ?: item.name.mimeTypeFromExtension())?.let { setMimeType(it) } }
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(item.name)

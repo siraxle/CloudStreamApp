@@ -6,6 +6,24 @@ private val MEDIA_EXTENSIONS = AUDIO_EXTENSIONS + VIDEO_EXTENSIONS
 private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif")
 private val CUE_EXTENSIONS = setOf("cue")
 
+fun String.mimeTypeFromExtension(): String? = when (substringAfterLast('.').lowercase()) {
+    "mp3"  -> "audio/mpeg"
+    "flac" -> "audio/flac"
+    "aac"  -> "audio/aac"
+    "ogg"  -> "audio/ogg"
+    "opus" -> "audio/ogg"
+    "m4a"  -> "audio/mp4"
+    "wav"  -> "audio/wav"
+    "ape"  -> "audio/x-ape"
+    "mp4"  -> "video/mp4"
+    "mkv"  -> "video/x-matroska"
+    "avi"  -> "video/x-msvideo"
+    "mov"  -> "video/quicktime"
+    "webm" -> "video/webm"
+    "ts"   -> "video/mp2t"
+    else   -> null
+}
+
 fun String.isMediaFile(): Boolean = substringAfterLast('.').lowercase() in MEDIA_EXTENSIONS
 fun String.isAudioFile(): Boolean = substringAfterLast('.').lowercase() in AUDIO_EXTENSIONS
 fun String.isVideoFile(): Boolean = substringAfterLast('.').lowercase() in VIDEO_EXTENSIONS

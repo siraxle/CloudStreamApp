@@ -21,12 +21,15 @@ import com.example.cloudstreamapp.domain.port.SettingsRepositoryPort
 import com.example.cloudstreamapp.domain.usecase.GetStreamUrlUseCase
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import java.util.concurrent.atomic.AtomicInteger
 
 @HiltWorker
 class PlaylistCacheWorker @AssistedInject constructor(
@@ -51,40 +54,40 @@ class PlaylistCacheWorker @AssistedInject constructor(
         // Report total immediately so the progress bar appears as soon as the worker starts
         setProgress(workDataOf(PROGRESS_INDEX to 0, PROGRESS_TOTAL to toDownload.size))
 
-        var processed = 0
+        val processed = AtomicInteger(0)
 
-        for (batch in toDownload.chunked(PARALLEL_DOWNLOADS)) {
-            if (isStopped) break
-            if (simpleCache.cacheSpace >= cacheLimit) break
-
-            // Announce the batch start so the UI ticks before waiting for network
-            setProgress(workDataOf(PROGRESS_INDEX to processed, PROGRESS_TOTAL to toDownload.size))
-
-            // Download batch items in parallel; wait for all before next batch
-            coroutineScope {
-                batch.forEach { cloudItem ->
-                    launch(Dispatchers.IO) {
-                        if (isStopped) return@launch
+        // Sliding window: as soon as one download finishes, the next one starts,
+        // so PARALLEL_DOWNLOADS slots stay busy until the queue is empty.
+        val slots = Semaphore(PARALLEL_DOWNLOADS)
+        coroutineScope {
+            for (cloudItem in toDownload) {
+                slots.acquire()
+                if (isStopped || simpleCache.cacheSpace >= cacheLimit) {
+                    slots.release()
+                    break
+                }
+                launch(Dispatchers.IO) {
+                    try {
                         val fileSize = cloudItem.sizeBytes ?: 0L
                         if (fileSize > 0 && simpleCache.cacheSpace + fileSize > cacheLimit) return@launch
-                        try {
-                            val url = getStreamUrl(cloudItem) ?: return@launch
-                            val downloadedBytes = downloadToCache(cloudItem.id, url)
-                            if (cloudItem.sizeBytes == null && downloadedBytes > 0) {
-                                playlistRepo.updateSizeBytes(cloudItem.id, downloadedBytes)
-                            } else {
-                                // File size was already known — bump version so UI re-checks cache status
-                                playlistRepo.notifyDataChanged()
-                            }
-                        } catch (_: Exception) {
-                            // Skip file on error, continue with the rest
+                        val url = getStreamUrl(cloudItem) ?: return@launch
+                        val downloadedBytes = downloadToCache(cloudItem.id, url)
+                        if (cloudItem.sizeBytes == null && downloadedBytes > 0) {
+                            playlistRepo.updateSizeBytes(cloudItem.id, downloadedBytes)
+                        } else {
+                            // File size was already known — bump version so UI re-checks cache status
+                            playlistRepo.notifyDataChanged()
                         }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // Skip file on error, continue with the rest
+                    } finally {
+                        slots.release()
+                        setProgress(workDataOf(PROGRESS_INDEX to processed.incrementAndGet(), PROGRESS_TOTAL to toDownload.size))
                     }
                 }
             }
-
-            processed += batch.size
-            setProgress(workDataOf(PROGRESS_INDEX to processed, PROGRESS_TOTAL to toDownload.size))
         }
 
         return Result.success()

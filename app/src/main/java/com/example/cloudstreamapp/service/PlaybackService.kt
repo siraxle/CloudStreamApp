@@ -11,11 +11,16 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.Extractor
+import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.example.cloudstreamapp.core.cache.CompositeMediaDataSourceFactory
+import com.example.cloudstreamapp.core.extractor.ApeExtractor
 import com.example.cloudstreamapp.core.cache.PermanentMediaCache
 import com.example.cloudstreamapp.core.cache.TempMediaCache
 import com.example.cloudstreamapp.data.playlist.PlaylistRepositoryImpl
@@ -85,8 +90,29 @@ class PlaybackService : MediaSessionService() {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
+        val renderersFactory = DefaultRenderersFactory(this)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+
+        // FfmpegAudioExtractor exists in standard Media3 ≥ 1.4.x but not in Jellyfin builds;
+        // load via reflection so the code compiles regardless.
+        val ffmpegExtractorClass: Class<*>? = try {
+            Class.forName("androidx.media3.decoder.ffmpeg.FfmpegAudioExtractor")
+        } catch (_: ClassNotFoundException) { null }
+
+        val bundledFactory = DefaultExtractorsFactory()
+        val extractorsFactory = ExtractorsFactory {
+            buildList {
+                add(ApeExtractor())
+                if (ffmpegExtractorClass != null) {
+                    add(ffmpegExtractorClass.getConstructor().newInstance() as Extractor)
+                }
+                addAll(bundledFactory.createExtractors())
+            }.toTypedArray()
+        }
+
         val player = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(mediaDataSourceFactory))
+            .setRenderersFactory(renderersFactory)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(mediaDataSourceFactory, extractorsFactory))
             .setLoadControl(loadControl)
             .setAudioAttributes(audioAttributes, /* handleAudioFocus= */ true)
             .setHandleAudioBecomingNoisy(true)

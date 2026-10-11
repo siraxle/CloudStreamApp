@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import javax.inject.Inject
@@ -158,35 +159,42 @@ class PlaylistDetailViewModel @Inject constructor(
 
             val cacheLimit = settingsRepo.cacheLimitBytes.first()
 
-            for (batch in toDownload.chunked(PARALLEL_DOWNLOADS)) {
-                if (!isActive) break
-                if (cacheManager.permUsedBytes >= cacheLimit) {
-                    _downloadError.tryEmit(DownloadError.CacheLimitReached)
-                    break
-                }
-
-                coroutineScope {
-                    batch.forEach { cloudItem ->
-                        launch(Dispatchers.IO) {
-                            _itemStates.update { it + (cloudItem.id to ItemDownloadState.InProgress(null)) }
-                            try {
-                                val url = getStreamUrl(cloudItem) ?: run {
-                                    _itemStates.update { map -> map - cloudItem.id }
-                                    return@launch
-                                }
-                                val downloadedBytes = downloadWithProgress(cloudItem.id, url) { pct ->
-                                    _itemStates.update { it + (cloudItem.id to ItemDownloadState.InProgress(pct)) }
-                                }
-                                if (cloudItem.sizeBytes == null && downloadedBytes > 0) {
-                                    repo.updateSizeBytes(cloudItem.id, downloadedBytes)
-                                }
-                                _itemStates.update { it + (cloudItem.id to ItemDownloadState.Done) }
-                            } catch (e: CancellationException) {
+            // Sliding window: as soon as one download finishes, the next one starts,
+            // so PARALLEL_DOWNLOADS slots stay busy until the queue is empty.
+            val slots = Semaphore(PARALLEL_DOWNLOADS)
+            coroutineScope {
+                for (cloudItem in toDownload) {
+                    slots.acquire()
+                    if (!isActive) {
+                        slots.release()
+                        break
+                    }
+                    if (cacheManager.permUsedBytes >= cacheLimit) {
+                        slots.release()
+                        _downloadError.tryEmit(DownloadError.CacheLimitReached)
+                        break
+                    }
+                    _itemStates.update { it + (cloudItem.id to ItemDownloadState.InProgress(null)) }
+                    launch(Dispatchers.IO) {
+                        try {
+                            val url = getStreamUrl(cloudItem) ?: run {
                                 _itemStates.update { map -> map - cloudItem.id }
-                                throw e
-                            } catch (_: Exception) {
-                                _itemStates.update { map -> map - cloudItem.id }
+                                return@launch
                             }
+                            val downloadedBytes = downloadWithProgress(cloudItem.id, url) { pct ->
+                                _itemStates.update { it + (cloudItem.id to ItemDownloadState.InProgress(pct)) }
+                            }
+                            if (cloudItem.sizeBytes == null && downloadedBytes > 0) {
+                                repo.updateSizeBytes(cloudItem.id, downloadedBytes)
+                            }
+                            _itemStates.update { it + (cloudItem.id to ItemDownloadState.Done) }
+                        } catch (e: CancellationException) {
+                            _itemStates.update { map -> map - cloudItem.id }
+                            throw e
+                        } catch (_: Exception) {
+                            _itemStates.update { map -> map - cloudItem.id }
+                        } finally {
+                            slots.release()
                         }
                     }
                 }
